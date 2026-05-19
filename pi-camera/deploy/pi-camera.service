@@ -1,0 +1,14 @@
+[Unit]
+Description=DIY Pi Camera Clean Modes
+After=multi-user.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/pi-camera
+ExecStart=/opt/pi-camera/pi-camera --fb=/dev/fb0 --width=480 --height=320 --fps=10 --touch=/dev/input/event4 --invert-y=true --invert-x=false --gpio-pin=-1 --look=LOW32
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
