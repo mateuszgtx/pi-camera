@@ -1,4 +1,9 @@
 using System.Diagnostics;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Hosting;
 using pi_camera.Services;
 
 using SixLabors.ImageSharp.Formats.Bmp;
@@ -73,7 +78,7 @@ public static class Program
     private static int _jpgQuality = 95;
     private static double _photoEv = -1.0;
     private static int _videoSeconds = 0;
-    private static int _previewFps = 10;
+    private static int _previewFps = 20;
     private static int _randomFrameMinFps = 1;
     private static int _randomFrameMaxFps = 12;
     private static int _randomFrameSeconds = 10;
@@ -91,9 +96,12 @@ public static class Program
     private static int _lowGrayYellowFix = 20;
     private static bool _swapRedBlue;
     private static readonly object _lastPreviewLock = new();
+    private static readonly object _settingsLock = new();
     private static byte[]? _lastPreviewRgb;
     private static int _lastPreviewWidth;
     private static int _lastPreviewHeight;
+    private static string? _lastCapturedPath;
+    private static DateTime _apiStartedUtc = DateTime.UtcNow;
 
     private static readonly object _previewRecordLock = new();
     private static FileStream? _previewRecordStream;
@@ -154,11 +162,13 @@ public static class Program
         var height = IntArg(args, "--height=", 320);
         var rotate = IntArg(args, "--rotate=", 0);
         _swapRedBlue = BoolArg(args, "--swap-rb=", false);
-        var fps = IntArg(args, "--fps=", 10);
+        var fps = IntArg(args, "--fps=", 20);
         _previewFps = fps;
         var gpioPin = IntArg(args, "--gpio-pin=", -1);
         var invertX = BoolArg(args, "--invert-x=", false);
         var invertY = BoolArg(args, "--invert-y=", true);
+        var apiEnabled = BoolArg(args, "--api=", true);
+        var apiUrl = Arg(args, "--api-url=", "http://0.0.0.0:5000");
 
         _previewSettings.Ev = DoubleArg(args, "--ev=", _previewSettings.Ev);
         _previewSettings.Sharpness = DoubleArg(args, "--sharpness=", _previewSettings.Sharpness);
@@ -224,6 +234,9 @@ public static class Program
             e.Cancel = true;
             _running = false;
         };
+
+        if (apiEnabled)
+            _ = Task.Run(() => StartApiServerAsync(apiUrl, outputDir, preview));
 
         _ = Task.Run(() => KeyboardLoop(preview, display, width, height, outputDir));
 
@@ -344,6 +357,7 @@ public static class Program
                         }
 
                         var path = await TakePhotoAsync(outputDir);
+                        _lastCapturedPath = path;
                         DrawSaved(display, width, height, fullHq ? "FOTO HQ OK" : "FOTO PREVIEW OK");
                         await Task.Delay(350);
                     }
@@ -1316,6 +1330,597 @@ public static class Program
         image.SaveAsJpeg(ms, new JpegEncoder { Quality = Math.Clamp(_jpgQuality, 50, 95) });
         return ms.ToArray();
     }
+
+
+    private static async Task StartApiServerAsync(string apiUrl, string outputDir, CameraPreviewService preview)
+    {
+        _apiStartedUtc = DateTime.UtcNow;
+
+        try
+        {
+            var builder = WebApplication.CreateBuilder(Array.Empty<string>());
+            builder.WebHost.UseUrls(apiUrl);
+
+            var app = builder.Build();
+
+            app.MapGet("/", () => Results.Text(ApiHomeHtml(), "text/html; charset=utf-8"));
+
+            app.MapGet("/api/status", () => Results.Ok(new
+            {
+                ok = true,
+                running = _running,
+                busy = _isBusy,
+                recording = _previewRecording,
+                randomRecording = _previewRandomRecording,
+                previewReady = _lastPreviewRgb is not null,
+                tab = _tab.ToString(),
+                captureKind = _captureKind.ToString(),
+                photoSource = _photoSource.ToString(),
+                photoFormat = _photoFormat,
+                videoFormat = _videoFormat,
+                lookPreset = _lookPreset,
+                paletteMode = _paletteMode.ToString(),
+                lastCaptured = _lastCapturedPath is null ? null : Path.GetFileName(_lastCapturedPath),
+                uptimeSeconds = (int)(DateTime.UtcNow - _apiStartedUtc).TotalSeconds
+            }));
+
+            app.MapGet("/api/preview.jpg", (bool? raw, int? q) =>
+            {
+                var jpeg = CreatePreviewJpeg(raw == true, q ?? 55);
+                return jpeg is null
+                    ? Results.NotFound(new { ok = false, message = "Preview not ready" })
+                    : Results.File(jpeg, "image/jpeg", enableRangeProcessing: false);
+            });
+
+            app.MapGet("/api/stream.mjpg", async (HttpContext context, bool? raw, int? q, int? fps) =>
+            {
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = "multipart/x-mixed-replace; boundary=frame";
+                context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, max-age=0";
+                context.Response.Headers.Pragma = "no-cache";
+                context.Response.Headers.Expires = "0";
+
+                var useRaw = raw ?? false;
+                var quality = Math.Clamp(q ?? 50, 35, 80);
+                var targetFps = Math.Clamp(fps ?? 15, 1, 30);
+                var delayMs = Math.Max(1, 1000 / targetFps);
+                var token = context.RequestAborted;
+
+                while (!token.IsCancellationRequested && _running)
+                {
+                    var jpeg = CreatePreviewJpeg(useRaw, quality);
+                    if (jpeg is not null)
+                    {
+                        await context.Response.WriteAsync("--frame\r\n", token);
+                        await context.Response.WriteAsync("Content-Type: image/jpeg\r\n", token);
+                        await context.Response.WriteAsync($"Content-Length: {jpeg.Length}\r\n\r\n", token);
+                        await context.Response.Body.WriteAsync(jpeg, token);
+                        await context.Response.WriteAsync("\r\n", token);
+                        await context.Response.Body.FlushAsync(token);
+                    }
+
+                    try
+                    {
+                        await Task.Delay(delayMs, token);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        break;
+                    }
+                }
+            });
+
+            app.MapPost("/api/capture", () =>
+            {
+                if (_isBusy)
+                    return Results.Conflict(new { ok = false, message = "Camera busy" });
+
+                _captureKind = CaptureKind.Photo;
+                _captureRequested = true;
+                return Results.Ok(new { ok = true, message = "Capture requested" });
+            });
+
+            app.MapPost("/api/video/toggle", () =>
+            {
+                if (_isBusy)
+                    return Results.Conflict(new { ok = false, message = "Camera busy" });
+
+                _captureKind = CaptureKind.Video;
+                _captureRequested = true;
+                return Results.Ok(new { ok = true, recording = !_previewRecording });
+            });
+
+            app.MapGet("/api/photos", () =>
+            {
+                Directory.CreateDirectory(outputDir);
+
+                var files = Directory.GetFiles(outputDir)
+                    .Where(IsMediaFile)
+                    .OrderByDescending(File.GetCreationTime)
+                    .Select(path => new
+                    {
+                        name = Path.GetFileName(path),
+                        size = new FileInfo(path).Length,
+                        created = File.GetCreationTime(path),
+                        url = "/api/photos/" + Uri.EscapeDataString(Path.GetFileName(path))
+                    })
+                    .ToList();
+
+                return Results.Ok(files);
+            });
+
+            app.MapGet("/api/photos/{file}", (string file) =>
+            {
+                var safeName = Path.GetFileName(Uri.UnescapeDataString(file));
+                var path = Path.Combine(outputDir, safeName);
+
+                if (!File.Exists(path) || !IsMediaFile(path))
+                    return Results.NotFound();
+
+                return Results.File(path, ContentTypeFor(path), enableRangeProcessing: true);
+            });
+
+            app.MapDelete("/api/photos/{file}", (string file) =>
+            {
+                var safeName = Path.GetFileName(Uri.UnescapeDataString(file));
+                var path = Path.Combine(outputDir, safeName);
+
+                if (!File.Exists(path) || !IsMediaFile(path))
+                    return Results.NotFound(new { ok = false, message = "File not found" });
+
+                File.Delete(path);
+                return Results.Ok(new { ok = true });
+            });
+
+            app.MapGet("/api/settings", () => Results.Ok(CurrentApiSettings()));
+
+            app.MapPost("/api/settings", async (HttpRequest request) =>
+            {
+                using var doc = await JsonDocument.ParseAsync(request.Body);
+                ApplyApiSettings(doc.RootElement, preview);
+                return Results.Ok(CurrentApiSettings());
+            });
+
+            app.MapGet("/api/settings/options", () => Results.Ok(new
+            {
+                lookPresets = new[] { "NORMAL", "LOW32", "LOW16", "RETRO8", "MONO4" },
+                captureKinds = new[] { "Photo", "Video", "RandomFrame" },
+                photoSources = new[] { "FullHq", "Preview" },
+                photoFormats = new[] { "jpg", "png", "bmp", "raw", "rawjpg" },
+                videoFormats = new[] { "mjpeg", "mp4" },
+                sensorModes = new[] { "full", "bin", "fast" },
+                paletteModes = Enum.GetNames<PaletteMode>(),
+                denoise = new[] { "cdn_off", "cdn_fast", "cdn_hq" },
+                colorChoices = _colorChoices
+            }));
+
+            Console.WriteLine($"[API] listening on {apiUrl}");
+            await app.RunAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[API] " + ex);
+        }
+    }
+
+    private static object CurrentApiSettings()
+    {
+        lock (_settingsLock)
+        {
+            return new
+            {
+                captureKind = _captureKind.ToString(),
+                lookPreset = _lookPreset,
+                photoFormat = _photoFormat,
+                photoSource = _photoSource.ToString(),
+                photoWidth = _photoWidth,
+                photoHeight = _photoHeight,
+                jpgQuality = _jpgQuality,
+                photoEv = _photoEv,
+                videoFormat = _videoFormat,
+                videoSeconds = _videoSeconds,
+                previewFps = _previewFps,
+                randomFrameMinFps = _randomFrameMinFps,
+                randomFrameMaxFps = _randomFrameMaxFps,
+                randomFrameSeconds = _randomFrameSeconds,
+                sensorMode = _sensorMode,
+                selectedColorAmount = _selectedColorAmount,
+                paletteMode = _paletteMode.ToString(),
+                redScale = _redScale,
+                greenScale = _greenScale,
+                blueScale = _blueScale,
+                lowSaveGamma = _lowSaveGamma,
+                lowGrayYellowFix = _lowGrayYellowFix,
+                preview = new
+                {
+                    ev = _previewSettings.Ev,
+                    sharpness = _previewSettings.Sharpness,
+                    contrast = _previewSettings.Contrast,
+                    saturation = _previewSettings.Saturation,
+                    brightness = _previewSettings.Brightness,
+                    blackLevel = _previewSettings.BlackLevel,
+                    darkLevel = _previewSettings.DarkLevel,
+                    previewPixelSize = _previewSettings.PreviewPixelSize,
+                    previewColorLevels = _previewSettings.PreviewColorLevels,
+                    denoise = _previewSettings.Denoise
+                }
+            };
+        }
+    }
+
+    private static void ApplyApiSettings(JsonElement json, CameraPreviewService preview)
+    {
+        lock (_settingsLock)
+        {
+            if (TryGetString(json, "captureKind", out var captureKind) && Enum.TryParse<CaptureKind>(captureKind, true, out var ck))
+                _captureKind = ck;
+
+            if (TryGetString(json, "lookPreset", out var lookPreset))
+                ApplyLookPreset(lookPreset);
+
+            if (TryGetString(json, "photoFormat", out var photoFormat))
+                _photoFormat = NextValue(photoFormat.ToLowerInvariant(), new[] { "jpg", "png", "bmp", "raw", "rawjpg" }, 0);
+
+            if (TryGetString(json, "photoSource", out var photoSource) && Enum.TryParse<PhotoSource>(photoSource, true, out var ps))
+                _photoSource = ps;
+
+            if (TryGetInt(json, "photoWidth", out var photoWidth))
+                _photoWidth = Math.Clamp(photoWidth, 320, 4056);
+
+            if (TryGetInt(json, "photoHeight", out var photoHeight))
+                _photoHeight = Math.Clamp(photoHeight, 240, 3040);
+
+            if (TryGetInt(json, "jpgQuality", out var jpgQuality))
+                _jpgQuality = Math.Clamp(jpgQuality, 70, 100);
+
+            if (TryGetDouble(json, "photoEv", out var photoEv))
+                _photoEv = Math.Clamp(photoEv, -8.0, 8.0);
+
+            if (TryGetString(json, "videoFormat", out var videoFormat))
+                _videoFormat = NormalizeVideoFormat(videoFormat);
+
+            if (TryGetInt(json, "videoSeconds", out var videoSeconds))
+                _videoSeconds = Math.Clamp(videoSeconds, 0, 3600);
+
+            if (TryGetInt(json, "previewFps", out var previewFps))
+                _previewFps = Math.Clamp(previewFps, 1, 30);
+
+            if (TryGetInt(json, "randomFrameMinFps", out var randomFrameMinFps))
+                _randomFrameMinFps = Math.Clamp(randomFrameMinFps, 1, 30);
+
+            if (TryGetInt(json, "randomFrameMaxFps", out var randomFrameMaxFps))
+                _randomFrameMaxFps = Math.Clamp(randomFrameMaxFps, 1, 30);
+
+            if (_randomFrameMinFps > _randomFrameMaxFps)
+                _randomFrameMaxFps = _randomFrameMinFps;
+
+            if (TryGetInt(json, "randomFrameSeconds", out var randomFrameSeconds))
+                _randomFrameSeconds = Math.Clamp(randomFrameSeconds, 1, 120);
+
+            if (TryGetString(json, "sensorMode", out var sensorMode))
+            {
+                sensorMode = sensorMode.ToLowerInvariant();
+                if (sensorMode is "full" or "bin" or "fast")
+                    _sensorMode = sensorMode;
+            }
+
+            var rootColorAmountProvided = TryGetInt(json, "selectedColorAmount", out var selectedColorAmount) || TryGetInt(json, "previewColorLevels", out selectedColorAmount);
+            if (rootColorAmountProvided)
+            {
+                SetPreviewColors(selectedColorAmount);
+                _manualColorAmount = true;
+            }
+
+            if (TryGetString(json, "paletteMode", out var paletteMode))
+                _paletteMode = ParsePaletteMode(paletteMode);
+
+            if (TryGetDouble(json, "redScale", out var redScale))
+                _redScale = ClampRound(redScale, 0.0, 2.0);
+
+            if (TryGetDouble(json, "greenScale", out var greenScale))
+                _greenScale = ClampRound(greenScale, 0.0, 2.0);
+
+            if (TryGetDouble(json, "blueScale", out var blueScale))
+                _blueScale = ClampRound(blueScale, 0.0, 2.0);
+
+            if (TryGetDouble(json, "lowSaveGamma", out var lowSaveGamma))
+                _lowSaveGamma = Math.Clamp(lowSaveGamma, 0.35, 2.5);
+
+            if (TryGetInt(json, "lowGrayYellowFix", out var lowGrayYellowFix))
+                _lowGrayYellowFix = Math.Clamp(lowGrayYellowFix, 0, 80);
+
+            var previewJson = json.TryGetProperty("preview", out var p) && p.ValueKind == JsonValueKind.Object ? p : json;
+
+            if (TryGetDouble(previewJson, "ev", out var ev)) _previewSettings.Ev = Math.Clamp(ev, -8.0, 8.0);
+            if (TryGetDouble(previewJson, "sharpness", out var sharpness)) _previewSettings.Sharpness = Math.Clamp(sharpness, 0.0, 16.0);
+            if (TryGetDouble(previewJson, "contrast", out var contrast)) _previewSettings.Contrast = Math.Clamp(contrast, 0.0, 32.0);
+            if (TryGetDouble(previewJson, "saturation", out var saturation)) _previewSettings.Saturation = Math.Clamp(saturation, 0.0, 32.0);
+            if (TryGetDouble(previewJson, "brightness", out var brightness)) _previewSettings.Brightness = Math.Clamp(brightness, -1.0, 1.0);
+            if (TryGetInt(previewJson, "blackLevel", out var blackLevel)) _previewSettings.BlackLevel = Math.Clamp(blackLevel, 0, 240);
+            if (TryGetDouble(previewJson, "darkLevel", out var darkLevel)) _previewSettings.DarkLevel = Math.Clamp(darkLevel, 0.25, 2.0);
+            if (TryGetInt(previewJson, "previewPixelSize", out var pixelSize)) _previewSettings.PreviewPixelSize = Math.Clamp(pixelSize, 1, 32);
+            if (!rootColorAmountProvided && TryGetInt(previewJson, "previewColorLevels", out var colorLevels)) SetPreviewColors(colorLevels);
+            if (TryGetString(previewJson, "denoise", out var denoise) && !string.IsNullOrWhiteSpace(denoise)) _previewSettings.Denoise = denoise;
+
+            preview.UpdateSettings(_previewSettings);
+        }
+    }
+
+    private static byte[]? CreatePreviewJpeg(bool raw, int quality)
+    {
+        byte[]? rgb;
+        int srcW;
+        int srcH;
+
+        lock (_lastPreviewLock)
+        {
+            if (_lastPreviewRgb is null || _lastPreviewWidth <= 0 || _lastPreviewHeight <= 0)
+                return null;
+
+            rgb = _lastPreviewRgb.ToArray();
+            srcW = _lastPreviewWidth;
+            srcH = _lastPreviewHeight;
+        }
+
+        using var image = new Image<Rgb24>(srcW, srcH);
+
+        if (raw)
+        {
+            image.ProcessPixelRows(accessor =>
+            {
+                for (var y = 0; y < srcH; y++)
+                {
+                    var row = accessor.GetRowSpan(y);
+                    var offset = y * srcW * 3;
+                    for (var x = 0; x < srcW; x++)
+                        row[x] = new Rgb24(rgb[offset + x * 3], rgb[offset + x * 3 + 1], rgb[offset + x * 3 + 2]);
+                }
+            });
+        }
+        else
+        {
+            FillImageWithCurrentLook(image, rgb, srcW, srcH);
+        }
+
+        using var ms = new MemoryStream();
+        image.SaveAsJpeg(ms, new JpegEncoder { Quality = Math.Clamp(quality, 35, 95) });
+        return ms.ToArray();
+    }
+
+    private static void FillImageWithCurrentLook(Image<Rgb24> image, byte[] rgb, int srcW, int srcH)
+    {
+        var pixel = Math.Clamp(_previewSettings.PreviewPixelSize, 1, 32);
+        var colors = Math.Clamp(_previewSettings.PreviewColorLevels, 2, 256);
+        var black = Math.Clamp(_previewSettings.BlackLevel, 0, 240);
+        var dark = Math.Clamp(_previewSettings.DarkLevel, 0.25, 2.0);
+        var denom = Math.Max(1, 255 - black);
+
+        image.ProcessPixelRows(accessor =>
+        {
+            for (var y = 0; y < srcH; y += pixel)
+            {
+                for (var x = 0; x < srcW; x += pixel)
+                {
+                    var sampleX = Math.Min(srcW - 1, x + pixel / 2);
+                    var sampleY = Math.Min(srcH - 1, y + pixel / 2);
+                    var i = (sampleY * srcW + sampleX) * 3;
+
+                    var r0 = ApplyBlackDarkSaved(rgb[i], black, denom, dark);
+                    var g0 = ApplyBlackDarkSaved(rgb[i + 1], black, denom, dark);
+                    var b0 = ApplyBlackDarkSaved(rgb[i + 2], black, denom, dark);
+
+                    (r0, g0, b0) = ApplyColorScale(r0, g0, b0);
+                    var (r, g, b) = QuantizeSavedPalette(r0, g0, b0, colors);
+                    (r, g, b) = ApplyLowSaveCorrection(r, g, b);
+
+                    if (_previewSettings.Saturation <= 0.01)
+                    {
+                        var gray = Math.Clamp((r * 30 + g * 59 + b * 11) / 100, 0, 255);
+                        r = gray;
+                        g = gray;
+                        b = gray;
+                    }
+
+                    var color = new Rgb24((byte)r, (byte)g, (byte)b);
+                    var maxY = Math.Min(srcH, y + pixel);
+                    var maxX = Math.Min(srcW, x + pixel);
+
+                    for (var yy = y; yy < maxY; yy++)
+                    {
+                        var row = accessor.GetRowSpan(yy);
+                        for (var xx = x; xx < maxX; xx++)
+                            row[xx] = color;
+                    }
+                }
+            }
+        });
+    }
+
+    private static bool TryGetString(JsonElement json, string name, out string value)
+    {
+        value = "";
+        if (!json.TryGetProperty(name, out var prop)) return false;
+        if (prop.ValueKind == JsonValueKind.String)
+        {
+            value = prop.GetString() ?? "";
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryGetInt(JsonElement json, string name, out int value)
+    {
+        value = 0;
+        if (!json.TryGetProperty(name, out var prop)) return false;
+        if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt32(out value)) return true;
+        if (prop.ValueKind == JsonValueKind.String && int.TryParse(prop.GetString(), out value)) return true;
+        return false;
+    }
+
+    private static bool TryGetDouble(JsonElement json, string name, out double value)
+    {
+        value = 0;
+        if (!json.TryGetProperty(name, out var prop)) return false;
+        if (prop.ValueKind == JsonValueKind.Number && prop.TryGetDouble(out value)) return true;
+        if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value)) return true;
+        return false;
+    }
+
+    private static bool IsMediaFile(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext is ".jpg" or ".jpeg" or ".png" or ".bmp" or ".dng" or ".avi" or ".mp4" or ".mjpeg" or ".rawmjpeg";
+    }
+
+    private static string ContentTypeFor(string path)
+    {
+        return Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".bmp" => "image/bmp",
+            ".dng" => "image/x-adobe-dng",
+            ".avi" => "video/x-msvideo",
+            ".mp4" => "video/mp4",
+            ".mjpeg" or ".rawmjpeg" => "video/x-motion-jpeg",
+            _ => "image/jpeg"
+        };
+    }
+
+    private static string ApiHomeHtml() => """
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Pi Camera</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;width:100%;height:100%;background:#000;color:#fff;font-family:system-ui,Arial,sans-serif;overflow:hidden}
+body{display:flex;flex-direction:column}
+#previewWrap{width:100vw;height:calc(100vh - 74px);display:grid;grid-template-columns:1fr;gap:2px;background:#000}.view{position:relative;min-width:0;min-height:0;background:#000}.view img{width:100%;height:100%;object-fit:contain;display:block;background:#000}.badge{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.55);padding:5px 8px;border-radius:10px;font-size:12px;font-weight:800}.hidden{display:none!important}#previewWrap.dual{grid-template-columns:1fr 1fr}@media (orientation:portrait){#previewWrap.dual{grid-template-columns:1fr;grid-template-rows:1fr 1fr}}
+.bar{height:74px;display:flex;gap:8px;align-items:center;justify-content:center;padding:8px;background:#050505;border-top:1px solid #151515}
+button{appearance:none;background:#181818;color:white;border:1px solid #333;border-radius:16px;padding:13px 12px;font-size:15px;font-weight:800;min-width:82px}
+button.primary{background:#fff;color:#000;border-color:#fff}
+button.danger{background:#2a0d0d;border-color:#5a2020}.small{min-width:0;padding:9px 10px;font-size:13px;border-radius:12px}
+.drawer{position:fixed;left:8px;right:8px;bottom:84px;max-height:70vh;overflow:auto;background:#090909;border:1px solid #252525;border-radius:18px;padding:10px;display:none;box-shadow:0 0 30px #000}
+.drawer.open{display:block}.photo{display:flex;justify-content:space-between;gap:10px;padding:12px 4px;border-bottom:1px solid #202020}
+.photo a{color:#fff;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.size{opacity:.55;white-space:nowrap}
+.grid{display:grid;gap:10px}.row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:8px 2px;border-bottom:1px solid #1d1d1d}
+label{font-size:13px;opacity:.78}.val{font-size:13px;opacity:.65;text-align:right}select,input{width:100%;background:#151515;color:#fff;border:1px solid #333;border-radius:12px;padding:10px;font-size:15px}input[type=range]{padding:0}.tabs{display:flex;gap:6px;margin-bottom:10px;position:sticky;top:0;background:#090909;padding-bottom:8px}.tabs button{flex:1;min-width:0;padding:10px 6px;font-size:13px}.tabs button.on{background:#fff;color:#000}.section{display:none}.section.on{display:block}.mini{font-size:12px;opacity:.55;margin-top:6px}.status{position:fixed;left:12px;top:10px;background:rgba(0,0,0,.5);padding:6px 9px;border-radius:12px;font-size:12px;opacity:0;transition:.2s}.status.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="previewWrap">
+  <div id="viewFiltered" class="view hidden"><img id="previewFiltered" alt=""><div class="badge">Filtr</div></div>
+  <div id="viewRaw" class="view"><img id="previewRaw" alt=""><div class="badge">Normal</div></div>
+</div>
+<div id="status" class="status"></div>
+<div id="photos" class="drawer"></div>
+<div id="settings" class="drawer">
+  <div class="tabs">
+    <button id="tab-basic" class="on" onclick="tab('basic')">Tryby</button>
+    <button id="tab-photo" onclick="tab('photo')">Foto</button>
+    <button id="tab-look" onclick="tab('look')">Obraz</button>
+    <button id="tab-advanced" onclick="tab('advanced')">Zaaw.</button>
+  </div>
+  <div id="basic" class="section on">
+    <div class="grid">
+      <div class="row"><label>Preset wyglądu</label><select id="lookPreset" onchange="set('lookPreset',this.value)"></select></div>
+      <div class="row"><label>Tryb zapisu</label><select id="captureKind" onchange="set('captureKind',this.value)"></select></div>
+      <div class="row"><label>Źródło zdjęcia</label><select id="photoSource" onchange="set('photoSource',this.value)"></select></div>
+      <div class="row"><label>Tryb sensora</label><select id="sensorMode" onchange="set('sensorMode',this.value)"></select></div>
+      <div class="row"><label>Format wideo</label><select id="videoFormat" onchange="set('videoFormat',this.value)"></select></div>
+      <div class="row"><label>Czas wideo: <span id="videoSecondsV"></span>s</label><input id="videoSeconds" type="range" min="0" max="300" step="1" oninput="setNum('videoSeconds',this.value)"></div>
+    </div>
+  </div>
+  <div id="photo" class="section">
+    <div class="grid">
+      <div class="row"><label>Format zdjęcia</label><select id="photoFormat" onchange="set('photoFormat',this.value)"></select></div>
+      <div class="row"><label>Szerokość: <span id="photoWidthV"></span></label><input id="photoWidth" type="range" min="320" max="4056" step="16" oninput="setNum('photoWidth',this.value)"></div>
+      <div class="row"><label>Wysokość: <span id="photoHeightV"></span></label><input id="photoHeight" type="range" min="240" max="3040" step="16" oninput="setNum('photoHeight',this.value)"></div>
+      <div class="row"><label>JPG jakość: <span id="jpgQualityV"></span></label><input id="jpgQuality" type="range" min="70" max="100" step="1" oninput="setNum('jpgQuality',this.value)"></div>
+      <div class="row"><label>EV zdjęcia: <span id="photoEvV"></span></label><input id="photoEv" type="range" min="-8" max="8" step="0.1" oninput="setNum('photoEv',this.value)"></div>
+      <div class="row"><label>Random min FPS: <span id="randomFrameMinFpsV"></span></label><input id="randomFrameMinFps" type="range" min="1" max="30" step="1" oninput="setNum('randomFrameMinFps',this.value)"></div>
+      <div class="row"><label>Random max FPS: <span id="randomFrameMaxFpsV"></span></label><input id="randomFrameMaxFps" type="range" min="1" max="30" step="1" oninput="setNum('randomFrameMaxFps',this.value)"></div>
+      <div class="row"><label>Random czas: <span id="randomFrameSecondsV"></span>s</label><input id="randomFrameSeconds" type="range" min="1" max="120" step="1" oninput="setNum('randomFrameSeconds',this.value)"></div>
+    </div>
+  </div>
+  <div id="look" class="section">
+    <div class="grid">
+      <div class="row"><label>Paleta</label><select id="paletteMode" onchange="set('paletteMode',this.value)"></select></div>
+      <div class="row"><label>Ilość kolorów</label><select id="selectedColorAmount" onchange="setNum('selectedColorAmount',this.value)"></select></div>
+      <div class="row"><label>Red: <span id="redScaleV"></span></label><input id="redScale" type="range" min="0" max="2" step="0.1" oninput="setNum('redScale',this.value)"></div>
+      <div class="row"><label>Green: <span id="greenScaleV"></span></label><input id="greenScale" type="range" min="0" max="2" step="0.1" oninput="setNum('greenScale',this.value)"></div>
+      <div class="row"><label>Blue: <span id="blueScaleV"></span></label><input id="blueScale" type="range" min="0" max="2" step="0.1" oninput="setNum('blueScale',this.value)"></div>
+      <div class="row"><label>Gamma zapisu: <span id="lowSaveGammaV"></span></label><input id="lowSaveGamma" type="range" min="0.35" max="2.5" step="0.05" oninput="setNum('lowSaveGamma',this.value)"></div>
+      <div class="row"><label>Yellow fix: <span id="lowGrayYellowFixV"></span></label><input id="lowGrayYellowFix" type="range" min="0" max="80" step="1" oninput="setNum('lowGrayYellowFix',this.value)"></div>
+    </div>
+  </div>
+  <div id="advanced" class="section">
+    <div class="grid">
+      <div class="row"><label>EV podglądu: <span id="evV"></span></label><input id="ev" type="range" min="-8" max="8" step="0.1" oninput="setPreviewNum('ev',this.value)"></div>
+      <div class="row"><label>Kontrast: <span id="contrastV"></span></label><input id="contrast" type="range" min="0" max="32" step="0.1" oninput="setPreviewNum('contrast',this.value)"></div>
+      <div class="row"><label>Saturacja: <span id="saturationV"></span></label><input id="saturation" type="range" min="0" max="32" step="0.1" oninput="setPreviewNum('saturation',this.value)"></div>
+      <div class="row"><label>Jasność: <span id="brightnessV"></span></label><input id="brightness" type="range" min="-1" max="1" step="0.1" oninput="setPreviewNum('brightness',this.value)"></div>
+      <div class="row"><label>Ostrość: <span id="sharpnessV"></span></label><input id="sharpness" type="range" min="0" max="16" step="0.1" oninput="setPreviewNum('sharpness',this.value)"></div>
+      <div class="row"><label>Black level: <span id="blackLevelV"></span></label><input id="blackLevel" type="range" min="0" max="240" step="1" oninput="setPreviewNum('blackLevel',this.value)"></div>
+      <div class="row"><label>Dark level: <span id="darkLevelV"></span></label><input id="darkLevel" type="range" min="0.25" max="2" step="0.05" oninput="setPreviewNum('darkLevel',this.value)"></div>
+      <div class="row"><label>Pixel size: <span id="previewPixelSizeV"></span></label><input id="previewPixelSize" type="range" min="1" max="32" step="1" oninput="setPreviewNum('previewPixelSize',this.value)"></div>
+      <div class="row"><label>Denoise</label><select id="denoise" onchange="setPreview('denoise',this.value)"></select></div>
+    </div>
+  </div>
+
+</div>
+<div class="bar">
+<button class="primary" onclick="capture()">Zdjęcie</button>
+<button onclick="setPreviewMode('normal')">Normal</button>
+<button onclick="setPreviewMode('filtered')">Filtr</button>
+<button onclick="toggleSettings()">Ustaw.</button>
+<button onclick="togglePhotos()">Galeria</button>
+<button class="small" onclick="setPreviewMode('dual')">Oba</button>
+</div>
+<script>
+const wrap=document.getElementById('previewWrap'), viewFiltered=document.getElementById('viewFiltered'), viewRaw=document.getElementById('viewRaw'), imgFiltered=document.getElementById('previewFiltered'), imgRaw=document.getElementById('previewRaw'), photos=document.getElementById('photos'), settings=document.getElementById('settings'), statusBox=document.getElementById('status');
+let photoOpen=false, settingsOpen=false, opts={}, state={}, saveTimer=null, previewMode='normal';
+function toast(t){statusBox.textContent=t;statusBox.classList.add('show');setTimeout(()=>statusBox.classList.remove('show'),900)}
+function stopStreams(){imgFiltered.removeAttribute('src');imgRaw.removeAttribute('src')}
+function setPreviewMode(mode){previewMode=mode;restartStream();toast(mode==='normal'?'Normal':mode==='filtered'?'Filtr':'Oba')}
+function restartStream(){const t=Date.now();stopStreams();wrap.classList.toggle('dual',previewMode==='dual');viewFiltered.classList.toggle('hidden',previewMode==='normal');viewRaw.classList.toggle('hidden',previewMode==='filtered');setTimeout(()=>{if(previewMode==='normal'){imgRaw.src='/api/stream.mjpg?raw=true&q=42&fps=18&t='+t}else if(previewMode==='filtered'){imgFiltered.src='/api/stream.mjpg?raw=false&q=45&fps=14&t='+t}else{imgFiltered.src='/api/stream.mjpg?raw=false&q=40&fps=10&t='+t;imgRaw.src='/api/stream.mjpg?raw=true&q=40&fps=10&t='+t}},60)}
+async function api(url,body){const r=await fetch(url,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});return await r.json()}
+async function capture(){await fetch('/api/capture',{method:'POST'});toast('Zdjęcie');setTimeout(loadPhotos,900)}
+async function video(){await fetch('/api/video/toggle',{method:'POST'});toast('Wideo')}
+async function togglePhotos(){photoOpen=!photoOpen;settingsOpen=false;photos.classList.toggle('open',photoOpen);settings.classList.remove('open');if(photoOpen)await loadPhotos()}
+async function toggleSettings(){settingsOpen=!settingsOpen;photoOpen=false;settings.classList.toggle('open',settingsOpen);photos.classList.remove('open');if(settingsOpen)await loadSettings()}
+function tab(id){['basic','photo','look','advanced'].forEach(x=>{document.getElementById(x).classList.toggle('on',x==id);document.getElementById('tab-'+x).classList.toggle('on',x==id)})}
+async function loadPhotos(){const files=await (await fetch('/api/photos',{cache:'no-store'})).json();photos.innerHTML=files.map(f=>`<div class="photo"><a href="${f.url}" target="_blank">${f.name}</a><span class="size">${Math.round(f.size/1024)} KB</span></div>`).join('')}
+function fillSelect(id,arr,val){const e=document.getElementById(id);e.innerHTML=arr.map(x=>`<option value="${x}">${x}</option>`).join('');e.value=val}
+function v(id,val){const e=document.getElementById(id), ve=document.getElementById(id+'V'); if(e)e.value=val; if(ve)ve.textContent=val}
+async function loadSettings(){opts=await api('/api/settings/options');state=await api('/api/settings');fillSelect('lookPreset',opts.lookPresets,state.lookPreset);fillSelect('captureKind',opts.captureKinds,state.captureKind);fillSelect('photoSource',opts.photoSources,state.photoSource);fillSelect('photoFormat',opts.photoFormats,state.photoFormat);fillSelect('videoFormat',opts.videoFormats,state.videoFormat);fillSelect('sensorMode',opts.sensorModes,state.sensorMode);fillSelect('paletteMode',opts.paletteModes,state.paletteMode);fillSelect('denoise',opts.denoise,state.preview.denoise);fillSelect('selectedColorAmount',opts.colorChoices,state.selectedColorAmount);['videoSeconds','photoWidth','photoHeight','jpgQuality','photoEv','randomFrameMinFps','randomFrameMaxFps','randomFrameSeconds','redScale','greenScale','blueScale','lowSaveGamma','lowGrayYellowFix'].forEach(k=>v(k,state[k]));['ev','contrast','saturation','brightness','sharpness','blackLevel','darkLevel','previewPixelSize'].forEach(k=>v(k,state.preview[k]))}
+function scheduleSave(){clearTimeout(saveTimer);saveTimer=setTimeout(save,140)}
+async function save(){state=await api('/api/settings',state); if(settingsOpen) await loadSettings()}
+function set(k,val){state[k]=val;scheduleSave()}
+function setNum(k,val){
+  state[k]=Number(val);
+  if(k==='selectedColorAmount'){
+    state.preview=state.preview||{};
+    state.preview.previewColorLevels=state[k];
+  }
+  v(k,state[k]);
+  scheduleSave();
+}
+function setPreview(k,val){state.preview=state.preview||{};state.preview[k]=val;scheduleSave()}
+function setPreviewNum(k,val){
+  state.preview=state.preview||{};
+  state.preview[k]=Number(val);
+  if(k==='previewColorLevels') state.selectedColorAmount=state.preview[k];
+  v(k,state.preview[k]);
+  scheduleSave();
+}
+loadPhotos();
+</script>
+</body>
+</html>
+""";
 
     private static void AddSensorArgs(List<string> args, bool still)
     {
