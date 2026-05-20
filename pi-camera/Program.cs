@@ -1675,6 +1675,38 @@ public static class Program
         return ms.ToArray();
     }
 
+    private static (int R, int G, int B) ApplyWebPreviewControls(int r, int g, int b)
+    {
+        // Te ustawienia mają być widoczne od razu w webowym podglądzie "Filtr".
+        // EV z rpicam może wymagać restartu procesu kamery, więc tutaj dodajemy szybki
+        // software-preview tylko dla MJPEG/web. Dzięki temu suwak EV reaguje na bieżąco.
+        var evMul = Math.Pow(2.0, Math.Clamp(_previewSettings.Ev, -4.0, 4.0));
+        var brightnessOffset = Math.Clamp(_previewSettings.Brightness, -1.0, 1.0) * 128.0;
+        var contrast = Math.Clamp(_previewSettings.Contrast, 0.0, 32.0);
+        var saturation = Math.Clamp(_previewSettings.Saturation, 0.0, 32.0);
+
+        static int Tone(int v, double evMul, double brightnessOffset, double contrast)
+        {
+            var x = v * evMul;
+            x = ((x - 128.0) * contrast) + 128.0 + brightnessOffset;
+            return Math.Clamp((int)Math.Round(x), 0, 255);
+        }
+
+        r = Tone(r, evMul, brightnessOffset, contrast);
+        g = Tone(g, evMul, brightnessOffset, contrast);
+        b = Tone(b, evMul, brightnessOffset, contrast);
+
+        if (Math.Abs(saturation - 1.0) > 0.001)
+        {
+            var gray = (r * 30 + g * 59 + b * 11) / 100.0;
+            r = Math.Clamp((int)Math.Round(gray + (r - gray) * saturation), 0, 255);
+            g = Math.Clamp((int)Math.Round(gray + (g - gray) * saturation), 0, 255);
+            b = Math.Clamp((int)Math.Round(gray + (b - gray) * saturation), 0, 255);
+        }
+
+        return (r, g, b);
+    }
+
     private static void FillImageWithCurrentLook(Image<Rgb24> image, byte[] rgb, int srcW, int srcH)
     {
         var pixel = Math.Clamp(_previewSettings.PreviewPixelSize, 1, 32);
@@ -1693,9 +1725,15 @@ public static class Program
                     var sampleY = Math.Min(srcH - 1, y + pixel / 2);
                     var i = (sampleY * srcW + sampleX) * 3;
 
-                    var r0 = ApplyBlackDarkSaved(rgb[i], black, denom, dark);
-                    var g0 = ApplyBlackDarkSaved(rgb[i + 1], black, denom, dark);
-                    var b0 = ApplyBlackDarkSaved(rgb[i + 2], black, denom, dark);
+                    var rawR = rgb[i];
+                    var rawG = rgb[i + 1];
+                    var rawB = rgb[i + 2];
+
+                    var (toneR, toneG, toneB) = ApplyWebPreviewControls(rawR, rawG, rawB);
+
+                    var r0 = ApplyBlackDarkSaved((byte)toneR, black, denom, dark);
+                    var g0 = ApplyBlackDarkSaved((byte)toneG, black, denom, dark);
+                    var b0 = ApplyBlackDarkSaved((byte)toneB, black, denom, dark);
 
                     (r0, g0, b0) = ApplyColorScale(r0, g0, b0);
                     var (r, g, b) = QuantizeSavedPalette(r0, g0, b0, colors);
@@ -2103,6 +2141,7 @@ input[type=range]{
 
 <script>
 let state={}, options={}, saveTimer=null, currentMode='raw';
+let saveInFlight=false, saveQueued=false, lastSaveMs=0;
 
 const $=id=>document.getElementById(id);
 
@@ -2111,7 +2150,7 @@ function toast(t){
   s.textContent=t;
   s.classList.add('show');
   clearTimeout(toast.t);
-  toast.t=setTimeout(()=>s.classList.remove('show'),1500);
+  toast.t=setTimeout(()=>s.classList.remove('show'),900);
 }
 
 function closeDrawers(){
@@ -2172,6 +2211,10 @@ function previewMode(mode){
   }
 }
 addEventListener('resize',()=>previewMode(currentMode));
+
+function showFilteredLive(){
+  if(currentMode==='raw') previewMode('filtered');
+}
 
 async function capture(){
   toast('Robię zdjęcie...');
@@ -2261,31 +2304,78 @@ function sync(){
 }
 
 async function save(){
+  if(saveInFlight){
+    saveQueued=true;
+    return;
+  }
+
+  saveInFlight=true;
+  saveQueued=false;
+  lastSaveMs=Date.now();
+
   try{
-    const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(state)});
-    state=await r.json();
-    sync();
+    const payload=JSON.stringify(state);
+    const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:payload});
+    const newState=await r.json();
+
+    // Nie robimy sync() podczas przesuwania suwaka, bo to potrafi cofać pozycję.
+    // Uzupełniamy tylko stan po stronie JS.
+    state=newState;
     toast('Zapisano');
-  }catch(e){toast('Błąd zapisu')}
+  }catch(e){
+    toast('Błąd zapisu');
+  }finally{
+    saveInFlight=false;
+    if(saveQueued) scheduleSave(true);
+  }
 }
 
-function scheduleSave(){
+// To nie jest debounce czekający aż puścisz suwak.
+// To throttle: wysyła zmiany cyklicznie podczas przesuwania, ale nie zalewa Raspberry Pi requestami.
+function scheduleSave(force=false){
+  toast('Zmieniono...');
   clearTimeout(saveTimer);
-  saveTimer=setTimeout(save,180);
+
+  const elapsed=Date.now()-lastSaveMs;
+  if(force || elapsed>120){
+    saveTimer=setTimeout(save,20);
+  }else{
+    saveTimer=setTimeout(save,120-elapsed);
+  }
+}
+
+function visualChange(){
+  showFilteredLive();
+  scheduleSave();
 }
 
 function set(k,val){
   state[k]=val;
-  scheduleSave();
+  if(k==='lookPreset' || k==='paletteMode') visualChange();
+  else scheduleSave();
 }
 
 function setNum(k,val){
   state[k]=Number(val);
+
   if(k==='selectedColorAmount'){
     state.preview=state.preview||{};
     state.preview.previewColorLevels=state[k];
     put('previewColorLevels',state[k]);
+    showFilteredLive();
   }
+
+  if(k==='photoEv'){
+    state.preview=state.preview||{};
+    state.preview.ev=state[k];
+    put('ev',state[k]);
+    showFilteredLive();
+  }
+
+  if(['redScale','greenScale','blueScale','lowSaveGamma','lowGrayYellowFix'].includes(k)){
+    showFilteredLive();
+  }
+
   put(k,state[k]);
   scheduleSave();
 }
@@ -2293,22 +2383,29 @@ function setNum(k,val){
 function setPreview(k,val){
   state.preview=state.preview||{};
   state.preview[k]=val;
+  if(k==='denoise') showFilteredLive();
   scheduleSave();
 }
 
 function setPreviewNum(k,val){
   state.preview=state.preview||{};
   state.preview[k]=Number(val);
+
   if(k==='previewColorLevels'){
     state.selectedColorAmount=state.preview[k];
     put('selectedColorAmount',state.selectedColorAmount);
   }
+
+  if(['ev','contrast','saturation','brightness','sharpness','blackLevel','darkLevel','previewPixelSize','previewColorLevels'].includes(k)){
+    showFilteredLive();
+  }
+
   put(k,state.preview[k]);
   scheduleSave();
 }
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawers()});
-previewMode('raw');
+previewMode('filtered');
 loadSettings();
 loadPhotos();
 </script>
