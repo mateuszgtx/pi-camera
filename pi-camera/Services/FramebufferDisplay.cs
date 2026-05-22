@@ -61,7 +61,7 @@ public sealed class FramebufferDisplay : IDisposable
         if (srcW <= 0 || srcH <= 0 || rgb.Length < srcW * srcH * 3)
             return;
 
-        pixelSize = Math.Clamp(pixelSize, 1, 32);
+        pixelSize = Math.Clamp(pixelSize, 1, 128);
         colorLevels = Math.Clamp(colorLevels, 2, 256);
 
         var drawW = Math.Min(Width - dstX, srcW);

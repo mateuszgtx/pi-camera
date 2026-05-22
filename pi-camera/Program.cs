@@ -53,6 +53,15 @@ public static class Program
         Cold
     }
 
+    private enum HardwareButton
+    {
+        Action,
+        Left,
+        Right,
+        Enter,
+        Back
+    }
+
     private static volatile bool _running = true;
     private static volatile bool _captureRequested;
     private static volatile bool _videoToggleRequested;
@@ -88,6 +97,11 @@ public static class Program
     private static readonly int[] _colorChoices = new[] { 2, 4, 8, 16, 32, 64, 128, 256 };
     private static int _selectedColorAmount = 32;
     private static bool _manualColorAmount;
+    private static readonly int[] _blockChoices = new[] { 8, 12, 16, 24, 32, 48, 64, 96, 120, 160, 240, 480 };
+    private static int _selectedBlockAmount = 32;
+    private static bool _manualBlockAmount;
+    private static int _previewWidth = 480;
+    private static int _selectedSettingRow;
     private static PaletteMode _paletteMode = PaletteMode.Green565;
     private static double _redScale = 1.0;
     private static double _greenScale = 1.0;
@@ -154,18 +168,21 @@ public static class Program
 
 
         var framebufferPath = Arg(args, "--fb=", "/dev/fb0");
-        var inputPath = Arg(args, "--touch=", "");
         var outputDir = Arg(args, "--out=", "/home/admin/Pictures/PiCamera");
 
         var width = IntArg(args, "--width=", 480);
+        _previewWidth = width;
         var height = IntArg(args, "--height=", 320);
         var rotate = IntArg(args, "--rotate=", 0);
         _swapRedBlue = BoolArg(args, "--swap-rb=", false);
         var fps = IntArg(args, "--fps=", 20);
         _previewFps = fps;
-        var gpioPin = IntArg(args, "--gpio-pin=", -1);
-        var invertX = BoolArg(args, "--invert-x=", false);
-        var invertY = BoolArg(args, "--invert-y=", true);
+        var legacyGpioPin = IntArg(args, "--gpio-pin=", -1);
+        var actionPin = IntArg(args, "--btn-action=", legacyGpioPin);
+        var leftPin = IntArg(args, "--btn-left=", -1);
+        var rightPin = IntArg(args, "--btn-right=", -1);
+        var enterPin = IntArg(args, "--btn-enter=", -1);
+        var backPin = IntArg(args, "--btn-back=", -1);
         var apiEnabled = BoolArg(args, "--api=", true);
         var apiUrl = Arg(args, "--api-url=", "http://0.0.0.0:5000");
 
@@ -200,6 +217,8 @@ public static class Program
 
         _selectedColorAmount = ClosestColorChoice(IntArg(args, "--colors=", _selectedColorAmount));
         _manualColorAmount = args.Any(a => a.StartsWith("--colors="));
+        _selectedBlockAmount = ClosestBlockChoice(IntArg(args, "--blocks=", _selectedBlockAmount));
+        _manualBlockAmount = args.Any(a => a.StartsWith("--blocks="));
 
         _paletteMode = ParsePaletteMode(Arg(args, "--palette=", "green565"));
 
@@ -214,17 +233,21 @@ public static class Program
         else
             _selectedColorAmount = ClosestColorChoice(_previewSettings.PreviewColorLevels);
 
+        if (_manualBlockAmount)
+            SetPreviewBlocks(_selectedBlockAmount);
+        else
+            _selectedBlockAmount = ClosestBlockChoice(BlocksFromPixelSize(_previewSettings.PreviewPixelSize));
+
         Directory.CreateDirectory(outputDir);
 
         using var display = new FramebufferDisplay(framebufferPath, width, height, rotate, _swapRedBlue);
         using var preview = new CameraPreviewService(width, height, fps, _previewSettings);
-        using var gpio = gpioPin >= 0 ? new GpioShutterService(pin: gpioPin) : null;
-        using var touch = string.IsNullOrWhiteSpace(inputPath) ? null : new TouchInputService(inputPath, width, height, invertX, invertY);
+        using var buttons = CreateButtonPanel(actionPin, leftPin, rightPin, enterPin, backPin);
 
         Console.WriteLine("Pi Camera clean modes");
         Console.WriteLine($"Framebuffer: {framebufferPath}");
-        Console.WriteLine($"Touch: {(string.IsNullOrWhiteSpace(inputPath) ? "off" : inputPath)} invertX={invertX} invertY={invertY}");
-        Console.WriteLine($"GPIO shutter: {(gpioPin >= 0 ? $"GPIO{gpioPin}" : "off")}");
+        Console.WriteLine("Touch: off (sterowanie dotykowe wylaczone)");
+        Console.WriteLine($"Buttons: action={PinLabel(actionPin)} left={PinLabel(leftPin)} right={PinLabel(rightPin)} enter={PinLabel(enterPin)} back={PinLabel(backPin)}");
         Console.WriteLine($"Output: {outputDir}");
         Console.WriteLine($"LOOK: {_lookPreset}");
 
@@ -239,22 +262,15 @@ public static class Program
 
         _ = Task.Run(() => KeyboardLoop(preview, display, width, height, outputDir));
 
-        if (gpio is not null)
+        if (buttons is not null)
         {
-            gpio.ShutterPressed += () =>
+            buttons.ButtonPressed += button =>
             {
-                _captureRequested = true;
+                HandleHardwareButton(button, preview, display, width, height, outputDir);
                 return Task.CompletedTask;
             };
-            gpio.StatusChanged += msg => Console.WriteLine("[GPIO] " + msg);
-            gpio.Start();
-        }
-
-        if (touch is not null)
-        {
-            touch.Touched += (x, y) => HandleTouch(x, y, width, height, preview, display, outputDir);
-            touch.StatusChanged += msg => Console.WriteLine("[TOUCH] " + msg);
-            touch.Start();
+            buttons.StatusChanged += msg => Console.WriteLine("[BUTTONS] " + msg);
+            buttons.Start();
         }
 
         preview.StatusChanged += msg => Console.WriteLine("[PREVIEW] " + msg);
@@ -748,7 +764,7 @@ public static class Program
 
         using var image = new Image<Rgb24>(srcW, srcH);
 
-        var pixel = Math.Clamp(_previewSettings.PreviewPixelSize, 1, 32);
+        var pixel = Math.Clamp(_previewSettings.PreviewPixelSize, 1, 128);
         var colors = Math.Clamp(_previewSettings.PreviewColorLevels, 2, 256);
         var black = Math.Clamp(_previewSettings.BlackLevel, 0, 240);
         var dark = Math.Clamp(_previewSettings.DarkLevel, 0.25, 2.0);
@@ -808,7 +824,7 @@ public static class Program
     {
         using var image = Image.Load<Rgb24>(inputPath);
 
-        var pixel = Math.Clamp(settings.PreviewPixelSize, 1, 32);
+        var pixel = Math.Clamp(settings.PreviewPixelSize, 1, 128);
         var colors = Math.Clamp(settings.PreviewColorLevels, 2, 256);
         var black = Math.Clamp(settings.BlackLevel, 0, 240);
         var dark = Math.Clamp(settings.DarkLevel, 0.25, 2.0);
@@ -1267,7 +1283,7 @@ public static class Program
     {
         using var image = new Image<Rgb24>(srcW, srcH);
 
-        var pixel = Math.Clamp(_previewSettings.PreviewPixelSize, 1, 32);
+        var pixel = Math.Clamp(_previewSettings.PreviewPixelSize, 1, 128);
         var colors = Math.Clamp(_previewSettings.PreviewColorLevels, 2, 256);
         var black = Math.Clamp(_previewSettings.BlackLevel, 0, 240);
         var dark = Math.Clamp(_previewSettings.DarkLevel, 0.25, 2.0);
@@ -1479,7 +1495,8 @@ public static class Program
                 sensorModes = new[] { "full", "bin", "fast" },
                 paletteModes = Enum.GetNames<PaletteMode>(),
                 denoise = new[] { "cdn_off", "cdn_fast", "cdn_hq" },
-                colorChoices = _colorChoices
+                colorChoices = _colorChoices,
+                blockChoices = _blockChoices
             }));
 
             Console.WriteLine($"[API] listening on {apiUrl}");
@@ -1513,6 +1530,7 @@ public static class Program
                 randomFrameSeconds = _randomFrameSeconds,
                 sensorMode = _sensorMode,
                 selectedColorAmount = _selectedColorAmount,
+                selectedBlockAmount = _selectedBlockAmount,
                 paletteMode = _paletteMode.ToString(),
                 redScale = _redScale,
                 greenScale = _greenScale,
@@ -1529,6 +1547,7 @@ public static class Program
                     blackLevel = _previewSettings.BlackLevel,
                     darkLevel = _previewSettings.DarkLevel,
                     previewPixelSize = _previewSettings.PreviewPixelSize,
+                    previewBlockAmount = _selectedBlockAmount,
                     previewColorLevels = _previewSettings.PreviewColorLevels,
                     denoise = _previewSettings.Denoise
                 }
@@ -1543,8 +1562,13 @@ public static class Program
             if (TryGetString(json, "captureKind", out var captureKind) && Enum.TryParse<CaptureKind>(captureKind, true, out var ck))
                 _captureKind = ck;
 
+            var lookPresetChanged = false;
             if (TryGetString(json, "lookPreset", out var lookPreset))
-                ApplyLookPreset(lookPreset);
+            {
+                var normalizedLook = (lookPreset ?? "LOW32").ToUpperInvariant();
+                lookPresetChanged = normalizedLook != _lookPreset;
+                ApplyLookPreset(normalizedLook);
+            }
 
             if (TryGetString(json, "photoFormat", out var photoFormat))
                 _photoFormat = NextValue(photoFormat.ToLowerInvariant(), new[] { "jpg", "png", "bmp", "raw", "rawjpg" }, 0);
@@ -1599,6 +1623,13 @@ public static class Program
                 _manualColorAmount = true;
             }
 
+            var rootBlockAmountProvided = TryGetInt(json, "selectedBlockAmount", out var selectedBlockAmount) || TryGetInt(json, "previewBlockAmount", out selectedBlockAmount);
+            if (rootBlockAmountProvided)
+            {
+                SetPreviewBlocks(selectedBlockAmount);
+                _manualBlockAmount = true;
+            }
+
             if (TryGetString(json, "paletteMode", out var paletteMode))
                 _paletteMode = ParsePaletteMode(paletteMode);
 
@@ -1626,8 +1657,15 @@ public static class Program
             if (TryGetDouble(previewJson, "brightness", out var brightness)) _previewSettings.Brightness = Math.Clamp(brightness, -1.0, 1.0);
             if (TryGetInt(previewJson, "blackLevel", out var blackLevel)) _previewSettings.BlackLevel = Math.Clamp(blackLevel, 0, 240);
             if (TryGetDouble(previewJson, "darkLevel", out var darkLevel)) _previewSettings.DarkLevel = Math.Clamp(darkLevel, 0.25, 2.0);
-            if (TryGetInt(previewJson, "previewPixelSize", out var pixelSize)) _previewSettings.PreviewPixelSize = Math.Clamp(pixelSize, 1, 32);
-            if (!rootColorAmountProvided && TryGetInt(previewJson, "previewColorLevels", out var colorLevels)) SetPreviewColors(colorLevels);
+            // Jeżeli właśnie zmieniono preset wyglądu, nie nadpisuj jego pikselizacji
+            // starymi wartościami wysłanymi przez panel WWW z poprzedniego stanu.
+            if (!lookPresetChanged && !rootBlockAmountProvided && TryGetInt(previewJson, "previewBlockAmount", out var previewBlockAmount)) SetPreviewBlocks(previewBlockAmount);
+            if (!lookPresetChanged && !rootBlockAmountProvided && TryGetInt(previewJson, "previewPixelSize", out var pixelSize))
+            {
+                _previewSettings.PreviewPixelSize = Math.Clamp(pixelSize, 1, 128);
+                _selectedBlockAmount = ClosestBlockChoice(BlocksFromPixelSize(_previewSettings.PreviewPixelSize));
+            }
+            if (!lookPresetChanged && !rootColorAmountProvided && TryGetInt(previewJson, "previewColorLevels", out var colorLevels)) SetPreviewColors(colorLevels);
             if (TryGetString(previewJson, "denoise", out var denoise) && !string.IsNullOrWhiteSpace(denoise)) _previewSettings.Denoise = denoise;
 
             preview.UpdateSettings(_previewSettings);
@@ -1709,7 +1747,7 @@ public static class Program
 
     private static void FillImageWithCurrentLook(Image<Rgb24> image, byte[] rgb, int srcW, int srcH)
     {
-        var pixel = Math.Clamp(_previewSettings.PreviewPixelSize, 1, 32);
+        var pixel = Math.Clamp(_previewSettings.PreviewPixelSize, 1, 128);
         var colors = Math.Clamp(_previewSettings.PreviewColorLevels, 2, 256);
         var black = Math.Clamp(_previewSettings.BlackLevel, 0, 240);
         var dark = Math.Clamp(_previewSettings.DarkLevel, 0.25, 2.0);
@@ -2114,6 +2152,7 @@ input[type=range]{
       <div class="card grid">
         <div class="row"><div class="rowTop"><label>Paleta</label></div><select id="paletteMode" onchange="set('paletteMode',this.value)"></select></div>
         <div class="row"><div class="rowTop"><label>Ilość kolorów</label><span class="val" id="selectedColorAmountV"></span></div><input id="selectedColorAmount" type="range" min="2" max="256" step="1" oninput="setNum('selectedColorAmount',this.value)"><div class="mini">Najlepiej używać wartości: 2, 4, 8, 16, 32, 64, 128, 256.</div></div>
+        <div class="row"><div class="rowTop"><label>Ilość bloków w poziomie</label><span class="val" id="selectedBlockAmountV"></span></div><input id="selectedBlockAmount" type="range" min="8" max="480" step="1" oninput="setNum('selectedBlockAmount',this.value)"><div class="mini">Mniej bloków = większe piksele. Najlepiej: 8, 12, 16, 24, 32, 48, 64, 96, 120, 160, 240, 480.</div></div>
         <div class="row"><div class="rowTop"><label>Red scale</label><span class="val" id="redScaleV"></span></div><input id="redScale" type="range" min="0" max="2" step="0.01" oninput="setNum('redScale',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Green scale</label><span class="val" id="greenScaleV"></span></div><input id="greenScale" type="range" min="0" max="2" step="0.01" oninput="setNum('greenScale',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Blue scale</label><span class="val" id="blueScaleV"></span></div><input id="blueScale" type="range" min="0" max="2" step="0.01" oninput="setNum('blueScale',this.value)"></div>
@@ -2131,7 +2170,8 @@ input[type=range]{
         <div class="row"><div class="rowTop"><label>Ostrość</label><span class="val" id="sharpnessV"></span></div><input id="sharpness" type="range" min="0" max="16" step="0.05" oninput="setPreviewNum('sharpness',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Black level</label><span class="val" id="blackLevelV"></span></div><input id="blackLevel" type="range" min="0" max="240" step="1" oninput="setPreviewNum('blackLevel',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Dark level</label><span class="val" id="darkLevelV"></span></div><input id="darkLevel" type="range" min="0.25" max="2" step="0.01" oninput="setPreviewNum('darkLevel',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Pixel size</label><span class="val" id="previewPixelSizeV"></span></div><input id="previewPixelSize" type="range" min="1" max="32" step="1" oninput="setPreviewNum('previewPixelSize',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Preview blocks</label><span class="val" id="previewBlockAmountV"></span></div><input id="previewBlockAmount" type="range" min="8" max="480" step="1" oninput="setPreviewNum('previewBlockAmount',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Pixel size</label><span class="val" id="previewPixelSizeV"></span></div><input id="previewPixelSize" type="range" min="1" max="128" step="1" oninput="setPreviewNum('previewPixelSize',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Preview colors</label><span class="val" id="previewColorLevelsV"></span></div><input id="previewColorLevels" type="range" min="2" max="256" step="1" oninput="setPreviewNum('previewColorLevels',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Denoise</label></div><select id="denoise" onchange="setPreview('denoise',this.value)"></select></div>
       </div>
@@ -2298,9 +2338,9 @@ function put(id,value){
 }
 
 function sync(){
-  for(const k of ['lookPreset','captureKind','photoSource','photoFormat','videoFormat','sensorMode','paletteMode','photoWidth','photoHeight','jpgQuality','photoEv','videoSeconds','previewFps','randomFrameMinFps','randomFrameMaxFps','randomFrameSeconds','selectedColorAmount','redScale','greenScale','blueScale','lowSaveGamma','lowGrayYellowFix']) put(k,state[k]);
+  for(const k of ['lookPreset','captureKind','photoSource','photoFormat','videoFormat','sensorMode','paletteMode','photoWidth','photoHeight','jpgQuality','photoEv','videoSeconds','previewFps','randomFrameMinFps','randomFrameMaxFps','randomFrameSeconds','selectedColorAmount','selectedBlockAmount','redScale','greenScale','blueScale','lowSaveGamma','lowGrayYellowFix']) put(k,state[k]);
   const p=state.preview||{};
-  for(const k of ['ev','sharpness','contrast','saturation','brightness','blackLevel','darkLevel','previewPixelSize','previewColorLevels','denoise']) put(k,p[k]);
+  for(const k of ['ev','sharpness','contrast','saturation','brightness','blackLevel','darkLevel','previewPixelSize','previewBlockAmount','previewColorLevels','denoise']) put(k,p[k]);
 }
 
 async function save(){
@@ -2349,9 +2389,43 @@ function visualChange(){
   scheduleSave();
 }
 
+function applyLookPresetDefaults(preset){
+  state.preview=state.preview||{};
+
+  const p=String(preset||'LOW32').toUpperCase();
+  const presets={
+    NORMAL:{sensorMode:'full',ev:-1.2,blackLevel:35,darkLevel:0.85,previewPixelSize:1,previewBlockAmount:480,previewColorLevels:256,contrast:0.75,saturation:0.85},
+    LOW32:{sensorMode:'bin',ev:-1.2,blackLevel:25,darkLevel:0.95,previewPixelSize:15,previewBlockAmount:32,previewColorLevels:32,contrast:0.80,saturation:0.85},
+    LOW16:{sensorMode:'fast',ev:-1.4,blackLevel:28,darkLevel:0.92,previewPixelSize:30,previewBlockAmount:16,previewColorLevels:16,contrast:0.85,saturation:0.80},
+    RETRO8:{sensorMode:'fast',ev:-1.6,blackLevel:60,darkLevel:0.72,previewPixelSize:20,previewBlockAmount:24,previewColorLevels:8,contrast:1.10,saturation:0.65},
+    MONO4:{sensorMode:'fast',ev:-1.3,blackLevel:55,darkLevel:0.70,previewPixelSize:8,previewBlockAmount:64,previewColorLevels:4,contrast:0.95,saturation:0.0}
+  };
+
+  const cfg=presets[p]||presets.LOW32;
+  state.sensorMode=cfg.sensorMode;
+  state.selectedColorAmount=cfg.previewColorLevels;
+  state.selectedBlockAmount=cfg.previewBlockAmount;
+  state.preview.ev=cfg.ev;
+  state.preview.blackLevel=cfg.blackLevel;
+  state.preview.darkLevel=cfg.darkLevel;
+  state.preview.previewPixelSize=cfg.previewPixelSize;
+  state.preview.previewBlockAmount=cfg.previewBlockAmount;
+  state.preview.previewColorLevels=cfg.previewColorLevels;
+  state.preview.contrast=cfg.contrast;
+  state.preview.saturation=cfg.saturation;
+
+  for(const k of ['sensorMode','selectedColorAmount','selectedBlockAmount','ev','blackLevel','darkLevel','previewPixelSize','previewBlockAmount','previewColorLevels','contrast','saturation']){
+    const value = k in state.preview ? state.preview[k] : state[k];
+    put(k,value);
+  }
+}
+
 function set(k,val){
   state[k]=val;
-  if(k==='lookPreset' || k==='paletteMode') visualChange();
+  if(k==='lookPreset'){
+    applyLookPresetDefaults(val);
+    visualChange();
+  }else if(k==='paletteMode') visualChange();
   else scheduleSave();
 }
 
@@ -2362,6 +2436,13 @@ function setNum(k,val){
     state.preview=state.preview||{};
     state.preview.previewColorLevels=state[k];
     put('previewColorLevels',state[k]);
+    showFilteredLive();
+  }
+
+  if(k==='selectedBlockAmount'){
+    state.preview=state.preview||{};
+    state.preview.previewBlockAmount=state[k];
+    put('previewBlockAmount',state[k]);
     showFilteredLive();
   }
 
@@ -2396,7 +2477,7 @@ function setPreviewNum(k,val){
     put('selectedColorAmount',state.selectedColorAmount);
   }
 
-  if(['ev','contrast','saturation','brightness','sharpness','blackLevel','darkLevel','previewPixelSize','previewColorLevels'].includes(k)){
+  if(['ev','contrast','saturation','brightness','sharpness','blackLevel','darkLevel','previewPixelSize','previewBlockAmount','previewColorLevels'].includes(k)){
     showFilteredLive();
   }
 
@@ -2456,6 +2537,270 @@ loadPhotos();
         {
             var err = await process.StandardError.ReadToEndAsync();
             throw new Exception($"{file} exit {process.ExitCode}: {err}");
+        }
+    }
+
+
+    private static GpioButtonPanelService<HardwareButton>? CreateButtonPanel(int actionPin, int leftPin, int rightPin, int enterPin, int backPin)
+    {
+        var buttons = new[]
+        {
+            (HardwareButton.Action, actionPin),
+            (HardwareButton.Left, leftPin),
+            (HardwareButton.Right, rightPin),
+            (HardwareButton.Enter, enterPin),
+            (HardwareButton.Back, backPin)
+        };
+
+        var service = new GpioButtonPanelService<HardwareButton>(buttons);
+        return service.HasButtons ? service : null;
+    }
+
+    private static string PinLabel(int pin) => pin >= 0 ? $"GPIO{pin}" : "off";
+
+    private static void HandleHardwareButton(HardwareButton button, CameraPreviewService preview, FramebufferDisplay display, int width, int height, string outputDir)
+    {
+        if (_isBusy && button != HardwareButton.Back)
+            return;
+
+        switch (button)
+        {
+            case HardwareButton.Action:
+                _captureRequested = true;
+                return;
+
+            case HardwareButton.Back:
+                if (_tab != Tab.Preview)
+                {
+                    _tab = Tab.Preview;
+                    _selectedSettingRow = 0;
+                    StartPreviewSafe(preview);
+                }
+                return;
+
+            case HardwareButton.Enter:
+                HandleEnterButton(preview, display, width, height, outputDir);
+                return;
+
+            case HardwareButton.Left:
+                HandleLeftRightButton(-1, preview, display, width, height, outputDir);
+                return;
+
+            case HardwareButton.Right:
+                HandleLeftRightButton(1, preview, display, width, height, outputDir);
+                return;
+        }
+    }
+
+    private static void HandleEnterButton(CameraPreviewService preview, FramebufferDisplay display, int width, int height, string outputDir)
+    {
+        if (_tab == Tab.Preview)
+        {
+            _tab = Tab.Mode;
+            _selectedSettingRow = 0;
+            preview.Stop();
+            DrawMode(display, width, height);
+            return;
+        }
+
+        if (_tab == Tab.Mode)
+        {
+            var rows = ModeRowsForPage(_modePage);
+            _selectedSettingRow++;
+            if (_selectedSettingRow >= rows)
+            {
+                _selectedSettingRow = 0;
+                _modePage = (_modePage + 1) % 8;
+            }
+            DrawMode(display, width, height);
+            return;
+        }
+
+        if (_tab == Tab.Gallery)
+        {
+            _tab = Tab.Mode;
+            _selectedSettingRow = 0;
+            DrawMode(display, width, height);
+            return;
+        }
+
+        if (_tab == Tab.Network)
+        {
+            _networkPage = (_networkPage + 1) % 3;
+            DrawNetwork(display, width, height);
+            return;
+        }
+
+        if (_tab == Tab.Info)
+        {
+            _tab = Tab.Preview;
+            StartPreviewSafe(preview);
+            return;
+        }
+    }
+
+    private static void HandleLeftRightButton(int dir, CameraPreviewService preview, FramebufferDisplay display, int width, int height, string outputDir)
+    {
+        if (_tab == Tab.Preview)
+        {
+            _captureKind = NextCaptureKind(_captureKind, dir);
+            return;
+        }
+
+        if (_tab == Tab.Mode)
+        {
+            AdjustModeSelectedValue(dir);
+            DrawMode(display, width, height);
+            return;
+        }
+
+        if (_tab == Tab.Gallery)
+        {
+            _galleryIndex = Math.Clamp(_galleryIndex + dir, 0, Math.Max(0, _galleryFiles.Count - 1));
+            DrawGallery(display, width, height, outputDir);
+            return;
+        }
+
+        if (_tab == Tab.Network)
+        {
+            _networkPage = (_networkPage + dir + 3) % 3;
+            DrawNetwork(display, width, height);
+            return;
+        }
+
+        if (_tab == Tab.Info)
+        {
+            _tab = Tab.Mode;
+            preview.Stop();
+            DrawMode(display, width, height);
+        }
+    }
+
+    private static int ModeRowsForPage(int page) => page switch
+    {
+        0 => 1,
+        1 => 3,
+        2 => 4,
+        3 => 4,
+        4 => 4,
+        5 => 5,
+        6 => 5,
+        7 => 5,
+        _ => 1
+    };
+
+    private static void AdjustModeSelectedValue(int dir)
+    {
+        var row = Math.Clamp(_selectedSettingRow, 0, ModeRowsForPage(_modePage) - 1);
+
+        if (_modePage == 0)
+        {
+            _lookPreset = NextLookPreset(_lookPreset, dir);
+            ApplyLookPreset(_lookPreset);
+            _selectedColorAmount = ClosestColorChoice(_previewSettings.PreviewColorLevels);
+            _selectedBlockAmount = ClosestBlockChoice(BlocksFromPixelSize(_previewSettings.PreviewPixelSize));
+            _manualColorAmount = false;
+            _manualBlockAmount = false;
+        }
+        else if (_modePage == 1)
+        {
+            switch (row)
+            {
+                case 0:
+                    _selectedColorAmount = NextColorAmount(_selectedColorAmount, dir);
+                    SetPreviewColors(_selectedColorAmount);
+                    _manualColorAmount = true;
+                    _lookPreset = "CUSTOM";
+                    break;
+                case 1:
+                    _selectedBlockAmount = NextBlockAmount(_selectedBlockAmount, dir);
+                    SetPreviewBlocks(_selectedBlockAmount);
+                    _manualBlockAmount = true;
+                    _lookPreset = "CUSTOM";
+                    break;
+                case 2:
+                    _paletteMode = NextPaletteMode(_paletteMode, dir);
+                    break;
+            }
+        }
+        else if (_modePage == 2)
+        {
+            switch (row)
+            {
+                case 0: _redScale = ClampRound(_redScale + dir * 0.1, 0.0, 2.0); break;
+                case 1: _greenScale = ClampRound(_greenScale + dir * 0.1, 0.0, 2.0); break;
+                case 2: _blueScale = ClampRound(_blueScale + dir * 0.1, 0.0, 2.0); break;
+                case 3: _redScale = _greenScale = _blueScale = 1.0; break;
+            }
+        }
+        else if (_modePage == 3)
+        {
+            switch (row)
+            {
+                case 0: _photoSource = NextPhotoSource(_photoSource, dir); break;
+                case 1: _photoFormat = NextValue(_photoFormat, new[] { "jpg", "png", "bmp", "raw", "rawjpg" }, dir); break;
+                case 2: _photoWidth = Math.Clamp(_photoWidth + dir * 16, 320, 4056); break;
+                case 3: _photoHeight = Math.Clamp(_photoHeight + dir * 16, 240, 3040); break;
+            }
+        }
+        else if (_modePage == 4)
+        {
+            switch (row)
+            {
+                case 0: _captureKind = NextCaptureKind(_captureKind, dir); break;
+                case 1: _videoFormat = NextValue(_videoFormat, new[] { "mjpeg", "mp4" }, dir); break;
+                case 2: _sensorMode = NextValue(_sensorMode, new[] { "full", "bin", "fast" }, dir); break;
+                case 3: _photoEv = Math.Round(Math.Clamp(_photoEv + dir * 0.5, -4.0, 2.0), 1); break;
+            }
+        }
+        else if (_modePage == 5)
+        {
+            switch (row)
+            {
+                case 0:
+                    _randomFrameMinFps = Math.Clamp(_randomFrameMinFps + dir, 1, 30);
+                    if (_randomFrameMinFps > _randomFrameMaxFps) _randomFrameMaxFps = _randomFrameMinFps;
+                    break;
+                case 1:
+                    _randomFrameMaxFps = Math.Clamp(_randomFrameMaxFps + dir, 1, 30);
+                    if (_randomFrameMaxFps < _randomFrameMinFps) _randomFrameMinFps = _randomFrameMaxFps;
+                    break;
+                case 2: _randomFrameSeconds = Math.Clamp(_randomFrameSeconds + dir, 1, 120); break;
+                case 3: _videoFormat = NextValue(_videoFormat, new[] { "mjpeg", "mp4" }, dir); break;
+                case 4: _sensorMode = NextValue(_sensorMode, new[] { "full", "bin", "fast" }, dir); break;
+            }
+        }
+        else if (_modePage == 6)
+        {
+            _lookPreset = "CUSTOM";
+            switch (row)
+            {
+                case 0: _previewSettings.Ev = ClampRound(_previewSettings.Ev + dir * 0.1, -4.0, 2.0); break;
+                case 1: _previewSettings.BlackLevel = Math.Clamp(_previewSettings.BlackLevel + dir * 5, 0, 180); break;
+                case 2: _previewSettings.DarkLevel = ClampRound(_previewSettings.DarkLevel + dir * 0.05, 0.3, 1.5); break;
+                case 3:
+                    _selectedBlockAmount = NextBlockAmount(_selectedBlockAmount, dir);
+                    SetPreviewBlocks(_selectedBlockAmount);
+                    _manualBlockAmount = true;
+                    break;
+                case 4:
+                    _selectedColorAmount = NextColorAmount(_selectedColorAmount, dir);
+                    SetPreviewColors(_selectedColorAmount);
+                    _manualColorAmount = true;
+                    break;
+            }
+        }
+        else if (_modePage == 7)
+        {
+            _lookPreset = "CUSTOM";
+            switch (row)
+            {
+                case 0: _previewSettings.Contrast = ClampRound(_previewSettings.Contrast + dir * 0.1, 0.0, 2.0); break;
+                case 1: _previewSettings.Saturation = ClampRound(_previewSettings.Saturation + dir * 0.1, 0.0, 2.0); break;
+                case 2: _previewSettings.Brightness = ClampRound(_previewSettings.Brightness + dir * 0.1, -1.0, 1.0); break;
+                case 3: _previewSettings.Sharpness = ClampRound(_previewSettings.Sharpness + dir * 0.1, -1.0, 2.0); break;
+                case 4: _jpgQuality = Math.Clamp(_jpgQuality + dir * 5, 70, 100); break;
+            }
         }
     }
 
@@ -2667,7 +3012,7 @@ loadPhotos();
                     _previewSettings.DarkLevel = ClampRound(_previewSettings.DarkLevel + dir * 0.05, 0.3, 1.5);
                     break;
                 case 3:
-                    _previewSettings.PreviewPixelSize = Math.Clamp(_previewSettings.PreviewPixelSize + dir, 1, 16);
+                    _previewSettings.PreviewPixelSize = Math.Clamp(_previewSettings.PreviewPixelSize + dir, 1, 128);
                     break;
                 case 4:
                     _selectedColorAmount = NextColorAmount(_selectedColorAmount, dir);
@@ -2726,39 +3071,39 @@ loadPhotos();
         }
         else if (_modePage == 1)
         {
-            display.DrawTextScaled("PALETA", 8, 8, 0xFFFF, 2);
-            DrawSettingRow(display, 64, width, "KOLORY", _selectedColorAmount.ToString());
-            DrawSettingRow(display, 110, width, "TRYB", PaletteModeLabel(_paletteMode));
-            display.DrawText("DZIALA DLA LOW16 I LOW32", 52, 154, 0xFFFF);
-            display.DrawText("GREEN/YELLOW=mono odcienie", 42, 176, 0xC618);
-            display.DrawText("BALANCED=mniej zielonego", 62, 194, 0xC618);
+            display.DrawTextScaled("PALETA/BLOKI", 8, 8, 0xFFFF, 2);
+            DrawSettingRow(display, 58, width, "KOLORY", _selectedColorAmount.ToString(), _selectedSettingRow == 0);
+            DrawSettingRow(display, 98, width, "BLOKI", _selectedBlockAmount.ToString(), _selectedSettingRow == 1);
+            DrawSettingRow(display, 138, width, "TRYB", PaletteModeLabel(_paletteMode), _selectedSettingRow == 2);
+            display.DrawText("BLOKI = liczba pikseli w poziomie", 18, 182, 0xFFFF);
+            display.DrawText("ENTER=nastepne / LEWO-PRAWO=zmien", 12, 202, 0xC618);
         }
         else if (_modePage == 2)
         {
             display.DrawTextScaled("SKALA KOLOROW", 8, 8, 0xFFFF, 2);
             display.DrawText("LEWO/PRAWO = -/+ 0.1", 28, 32, 0xC618);
-            DrawSettingRow(display, 66, width, "RED", _redScale.ToString("0.0"));
-            DrawSettingRow(display, 106, width, "GREEN", _greenScale.ToString("0.0"));
-            DrawSettingRow(display, 146, width, "BLUE", _blueScale.ToString("0.0"));
-            DrawSettingRow(display, 186, width, "RESET", "1.0");
+            DrawSettingRow(display, 66, width, "RED", _redScale.ToString("0.0"), _selectedSettingRow == 0);
+            DrawSettingRow(display, 106, width, "GREEN", _greenScale.ToString("0.0"), _selectedSettingRow == 1);
+            DrawSettingRow(display, 146, width, "BLUE", _blueScale.ToString("0.0"), _selectedSettingRow == 2);
+            DrawSettingRow(display, 186, width, "RESET", "1.0", _selectedSettingRow == 3);
         }
         else if (_modePage == 3)
         {
             display.DrawTextScaled("FOTO", 8, 8, 0xFFFF, 2);
             var y = 58;
-            DrawSettingRow(display, y, width, "SOURCE", PhotoSourceLabel()); y += 40;
-            DrawSettingRow(display, y, width, "FORMAT", _photoFormat.ToUpperInvariant()); y += 40;
-            DrawSettingRow(display, y, width, "WIDTH", _photoWidth.ToString()); y += 40;
-            DrawSettingRow(display, y, width, "HEIGHT", _photoHeight.ToString());
+            DrawSettingRow(display, y, width, "SOURCE", PhotoSourceLabel(), _selectedSettingRow == 0); y += 40;
+            DrawSettingRow(display, y, width, "FORMAT", _photoFormat.ToUpperInvariant(), _selectedSettingRow == 1); y += 40;
+            DrawSettingRow(display, y, width, "WIDTH", _photoWidth.ToString(), _selectedSettingRow == 2); y += 40;
+            DrawSettingRow(display, y, width, "HEIGHT", _photoHeight.ToString(), _selectedSettingRow == 3);
             display.DrawText("FULL HQ domyslnie 4056x3040", 20, 222, 0xC618);
         }
         else if (_modePage == 4)
         {
             display.DrawTextScaled("VIDEO/SENSOR", 8, 8, 0xFFFF, 2);
-            DrawSettingRow(display, 60, width, "TRYB", CaptureKindLabel(_captureKind));
-            DrawSettingRow(display, 100, width, "VIDEO", VideoFormatLabel());
-            DrawSettingRow(display, 140, width, "SENSOR", SensorLabel(_sensorMode));
-            DrawSettingRow(display, 180, width, "FOTO EV", _photoEv.ToString("0.0"));
+            DrawSettingRow(display, 60, width, "TRYB", CaptureKindLabel(_captureKind), _selectedSettingRow == 0);
+            DrawSettingRow(display, 100, width, "VIDEO", VideoFormatLabel(), _selectedSettingRow == 1);
+            DrawSettingRow(display, 140, width, "SENSOR", SensorLabel(_sensorMode), _selectedSettingRow == 2);
+            DrawSettingRow(display, 180, width, "FOTO EV", _photoEv.ToString("0.0"), _selectedSettingRow == 3);
             display.DrawText("MJPEG=AVI / MP4 po STOP", 54, 220, 0xC618);
         }
         else if (_modePage == 5)
@@ -2766,11 +3111,11 @@ loadPhotos();
             display.DrawTextScaled("RANDOM FRAME", 8, 8, 0xFFFF, 2);
             display.DrawText("LOSOWY FPS CO 1 SEKUNDE", 8, 31, 0xC618);
             var y = 58;
-            DrawSettingRow(display, y, width, "MIN FPS", _randomFrameMinFps.ToString()); y += 34;
-            DrawSettingRow(display, y, width, "MAX FPS", _randomFrameMaxFps.ToString()); y += 34;
-            DrawSettingRow(display, y, width, "SEK", _randomFrameSeconds.ToString()); y += 34;
-            DrawSettingRow(display, y, width, "VIDEO", VideoFormatLabel()); y += 34;
-            DrawSettingRow(display, y, width, "SENSOR", SensorLabel(_sensorMode));
+            DrawSettingRow(display, y, width, "MIN FPS", _randomFrameMinFps.ToString(), _selectedSettingRow == 0); y += 34;
+            DrawSettingRow(display, y, width, "MAX FPS", _randomFrameMaxFps.ToString(), _selectedSettingRow == 1); y += 34;
+            DrawSettingRow(display, y, width, "SEK", _randomFrameSeconds.ToString(), _selectedSettingRow == 2); y += 34;
+            DrawSettingRow(display, y, width, "VIDEO", VideoFormatLabel(), _selectedSettingRow == 3); y += 34;
+            DrawSettingRow(display, y, width, "SENSOR", SensorLabel(_sensorMode), _selectedSettingRow == 4);
             display.DrawText("MJPEG=AVI / MP4 po STOP", 54, 228, 0xC618);
         }
         else if (_modePage == 6)
@@ -2778,22 +3123,22 @@ loadPhotos();
             display.DrawTextScaled("CUSTOM 1/2", 8, 8, 0xFFFF, 2);
             display.DrawText("LIVE PREVIEW", 8, 31, 0xC618);
             var y = 58;
-            DrawSettingRow(display, y, width, "EV", _previewSettings.Ev.ToString("0.0")); y += 34;
-            DrawSettingRow(display, y, width, "BLACK", _previewSettings.BlackLevel.ToString()); y += 34;
-            DrawSettingRow(display, y, width, "DARK", _previewSettings.DarkLevel.ToString("0.00")); y += 34;
-            DrawSettingRow(display, y, width, "PIXEL", _previewSettings.PreviewPixelSize.ToString()); y += 34;
-            DrawSettingRow(display, y, width, "COLORS", _previewSettings.PreviewColorLevels.ToString());
+            DrawSettingRow(display, y, width, "EV", _previewSettings.Ev.ToString("0.0"), _selectedSettingRow == 0); y += 34;
+            DrawSettingRow(display, y, width, "BLACK", _previewSettings.BlackLevel.ToString(), _selectedSettingRow == 1); y += 34;
+            DrawSettingRow(display, y, width, "DARK", _previewSettings.DarkLevel.ToString("0.00"), _selectedSettingRow == 2); y += 34;
+            DrawSettingRow(display, y, width, "BLOKI", _selectedBlockAmount.ToString(), _selectedSettingRow == 3); y += 34;
+            DrawSettingRow(display, y, width, "KOLORY", _selectedColorAmount.ToString(), _selectedSettingRow == 4);
         }
         else
         {
             display.DrawTextScaled("CUSTOM 2/2", 8, 8, 0xFFFF, 2);
             display.DrawText("KOLOR/JAKOSC", 8, 31, 0xC618);
             var y = 58;
-            DrawSettingRow(display, y, width, "CONTR", _previewSettings.Contrast.ToString("0.0")); y += 34;
-            DrawSettingRow(display, y, width, "SAT", _previewSettings.Saturation.ToString("0.0")); y += 34;
-            DrawSettingRow(display, y, width, "BRIGHT", _previewSettings.Brightness.ToString("0.0")); y += 34;
-            DrawSettingRow(display, y, width, "SHARP", _previewSettings.Sharpness.ToString("0.0")); y += 34;
-            DrawSettingRow(display, y, width, "JPG Q", _jpgQuality.ToString());
+            DrawSettingRow(display, y, width, "CONTR", _previewSettings.Contrast.ToString("0.0"), _selectedSettingRow == 0); y += 34;
+            DrawSettingRow(display, y, width, "SAT", _previewSettings.Saturation.ToString("0.0"), _selectedSettingRow == 1); y += 34;
+            DrawSettingRow(display, y, width, "BRIGHT", _previewSettings.Brightness.ToString("0.0"), _selectedSettingRow == 2); y += 34;
+            DrawSettingRow(display, y, width, "SHARP", _previewSettings.Sharpness.ToString("0.0"), _selectedSettingRow == 3); y += 34;
+            DrawSettingRow(display, y, width, "JPG Q", _jpgQuality.ToString(), _selectedSettingRow == 4);
         }
 
         DrawModePageButton(display, width, height);
@@ -2971,11 +3316,11 @@ loadPhotos();
     {
         display.Clear(0x0000);
         display.DrawTextScaled("INFO", 8, 8, 0xFFFF, 2);
-        display.DrawText("POD: DOTKNIJ OBRAZU = FOTO/REC", 8, 44, 0xFFFF);
+        display.DrawText("ACTION = FOTO/REC", 8, 44, 0xFFFF);
         display.DrawText("TRYB: LOOK / RAW / VIDEO / RANDOM", 8, 66, 0xFFFF);
         display.DrawText("KOLOR LCD: --swap-rb=true gdy jasne wpada w czerwien", 8, 84, 0xC618);
         display.DrawText("SIEC: WIFI HOTSPOT ETH", 8, 88, 0xFFFF);
-        display.DrawText("1 POD 2 TRYB 3 GAL 4 SIEC 5 INFO", 8, 110, 0xC618);
+        display.DrawText("ENTER=menu  BACK=podglad  L/P=zmiana", 8, 110, 0xC618);
         display.DrawText("ZDJECIA:", 8, 150, 0xFFE0);
         display.DrawText(outputDir.ToUpperInvariant(), 8, 170, 0xFFFF);
         DrawTabs(display, width, height);
@@ -3024,12 +3369,14 @@ loadPhotos();
         display.DrawText(text, x + 10, y + 16, 0xFFFF);
     }
 
-    private static void DrawSettingRow(FramebufferDisplay display, int y, int width, string name, string value)
+    private static void DrawSettingRow(FramebufferDisplay display, int y, int width, string name, string value, bool active = false)
     {
-        display.FillRect(8, y - 4, width - 16, 30, 0x1082);
-        display.FillRect(8, y - 4, 50, 30, 0x4208);
-        display.DrawTextScaled("-", 25, y + 3, 0xFFFF, 2);
-        display.DrawTextScaled(name, 70, y + 3, 0xFFE0, 1);
+        display.FillRect(8, y - 4, width - 16, 30, active ? (ushort)0x2945 : (ushort)0x1082);
+        if (active)
+            display.FillRect(8, y - 4, 8, 30, 0xFFE0);
+        display.FillRect(18, y - 4, 40, 30, 0x4208);
+        display.DrawTextScaled("-", 31, y + 3, 0xFFFF, 2);
+        display.DrawTextScaled(name, 70, y + 3, active ? (ushort)0xFFFF : (ushort)0xFFE0, 1);
         display.DrawTextScaled(value, 220, y + 3, 0xFFFF, 1);
         display.FillRect(width - 60, y - 4, 52, 30, 0x4208);
         display.DrawTextScaled("+", width - 43, y + 3, 0xFFFF, 2);
@@ -3243,8 +3590,50 @@ loadPhotos();
         );
     }
 
-    private static int NextColorAmount(int current, int dir)
+
+    private static int NextBlockAmount(int current, int dir)
     {
+        current = ClosestBlockChoice(current);
+        var i = Array.IndexOf(_blockChoices, current);
+        if (i < 0)
+            i = Array.IndexOf(_blockChoices, 32);
+
+        i = Math.Clamp(i + dir, 0, _blockChoices.Length - 1);
+        return _blockChoices[i];
+    }
+
+    private static int ClosestBlockChoice(int value)
+    {
+        var best = _blockChoices[0];
+        var bestDiff = Math.Abs(value - best);
+
+        foreach (var candidate in _blockChoices)
+        {
+            var diff = Math.Abs(value - candidate);
+            if (diff < bestDiff)
+            {
+                best = candidate;
+                bestDiff = diff;
+            }
+        }
+
+        return best;
+    }
+
+    private static int BlocksFromPixelSize(int pixelSize)
+    {
+        pixelSize = Math.Clamp(pixelSize, 1, 128);
+        return Math.Clamp((int)Math.Round(_previewWidth / (double)pixelSize), 1, _previewWidth);
+    }
+
+    private static void SetPreviewBlocks(int blocks)
+    {
+        _selectedBlockAmount = ClosestBlockChoice(blocks);
+        var pixel = (int)Math.Round(_previewWidth / (double)_selectedBlockAmount);
+        _previewSettings.PreviewPixelSize = Math.Clamp(pixel, 1, 128);
+    }
+
+    private static int NextColorAmount(int current, int dir)    {
         current = ClosestColorChoice(current);
         var i = Array.IndexOf(_colorChoices, current);
         if (i < 0)
@@ -3304,7 +3693,7 @@ loadPhotos();
                 _previewSettings.Ev = -1.2;
                 _previewSettings.BlackLevel = 35;
                 _previewSettings.DarkLevel = 0.85;
-                _previewSettings.PreviewPixelSize = 1;
+                SetPreviewBlocks(480);
                 _previewSettings.PreviewColorLevels = 256;
                 _previewSettings.Contrast = 0.75;
                 _previewSettings.Saturation = 0.85;
@@ -3314,7 +3703,7 @@ loadPhotos();
                 _previewSettings.Ev = -1.2;
                 _previewSettings.BlackLevel = 25;
                 _previewSettings.DarkLevel = 0.95;
-                _previewSettings.PreviewPixelSize = 4;
+                SetPreviewBlocks(32);
                 _previewSettings.PreviewColorLevels = 32;
                 _previewSettings.Contrast = 0.80;
                 _previewSettings.Saturation = 0.85;
@@ -3324,7 +3713,7 @@ loadPhotos();
                 _previewSettings.Ev = -1.4;
                 _previewSettings.BlackLevel = 28;
                 _previewSettings.DarkLevel = 0.92;
-                _previewSettings.PreviewPixelSize = 6;
+                SetPreviewBlocks(16);
                 _previewSettings.PreviewColorLevels = 16;
                 _previewSettings.Contrast = 0.85;
                 _previewSettings.Saturation = 0.80;
@@ -3334,7 +3723,7 @@ loadPhotos();
                 _previewSettings.Ev = -1.6;
                 _previewSettings.BlackLevel = 60;
                 _previewSettings.DarkLevel = 0.72;
-                _previewSettings.PreviewPixelSize = 8;
+                SetPreviewBlocks(24);
                 _previewSettings.PreviewColorLevels = 8;
                 _previewSettings.Contrast = 0.90;
                 _previewSettings.Saturation = 0.75;
@@ -3344,7 +3733,7 @@ loadPhotos();
                 _previewSettings.Ev = -1.6;
                 _previewSettings.BlackLevel = 65;
                 _previewSettings.DarkLevel = 0.70;
-                _previewSettings.PreviewPixelSize = 8;
+                SetPreviewBlocks(64);
                 _previewSettings.PreviewColorLevels = 4;
                 _previewSettings.Contrast = 0.95;
                 _previewSettings.Saturation = 0.0;
