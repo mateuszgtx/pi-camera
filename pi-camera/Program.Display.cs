@@ -59,11 +59,20 @@ public static partial class Program
             display.DrawTextScaled("RANDOM", 8, 42, 0xFFFF, 2);
             DrawSettingRow(display, 74, width, "MIN FPS", _randomFrameMinFps.ToString(), IsActiveModeRow(0));
             DrawSettingRow(display, 108, width, "MAX FPS", _randomFrameMaxFps.ToString(), IsActiveModeRow(1));
-            DrawSettingRow(display, 142, width, "SEK", _randomFrameSeconds.ToString(), IsActiveModeRow(2));
+            DrawSettingRow(display, 142, width, "SEG SEK", _randomFrameSeconds.ToString(), IsActiveModeRow(2));
             DrawSettingRow(display, 176, width, "VIDEO", VideoFormatLabel(), IsActiveModeRow(3));
             DrawSettingRow(display, 210, width, "SENSOR", SensorLabel(_sensorMode), IsActiveModeRow(4));
         }
         else if (_modePage == 5)
+        {
+            display.DrawTextScaled("GLITCH", 8, 42, 0xFFFF, 2);
+            DrawSettingRow(display, 74, width, "SILA", _glitchStrength.ToString(), IsActiveModeRow(0));
+            DrawSettingRow(display, 108, width, "ZMIANA", _glitchChangeMs + "ms", IsActiveModeRow(1));
+            DrawSettingRow(display, 142, width, "PALETA", OnOff(_glitchPaletteEnabled), IsActiveModeRow(2));
+            DrawSettingRow(display, 176, width, "PIX", OnOff(_glitchPixelsEnabled), IsActiveModeRow(3));
+            DrawSettingRow(display, 210, width, "RGB", OnOff(_glitchRgbEnabled), IsActiveModeRow(4));
+        }
+        else if (_modePage == 6)
         {
             display.DrawTextScaled("LIVE 1/2", 8, 42, 0xFFFF, 2);
             DrawSettingRow(display, 74, width, "EV", _previewSettings.Ev.ToString("0.0"), IsActiveModeRow(0));
@@ -87,6 +96,8 @@ public static partial class Program
         display.Flush();
     }
 
+    private static string OnOff(bool value) => value ? "ON" : "OFF";
+
     private static void DrawModePageButton(FramebufferDisplay display, int width, int height)
     {
         var y = height - 44 - 38;
@@ -96,8 +107,9 @@ public static partial class Program
                     _modePage == 1 ? "DALEJ: FOTO" :
                     _modePage == 2 ? "DALEJ: VIDEO/SENSOR" :
                     _modePage == 3 ? "DALEJ: RANDOM" :
-                    _modePage == 4 ? "DALEJ: LIVE 1/2" :
-                    _modePage == 5 ? "DALEJ: LIVE 2/2" :
+                    _modePage == 4 ? "DALEJ: GLITCH" :
+                    _modePage == 5 ? "DALEJ: LIVE 1/2" :
+                    _modePage == 6 ? "DALEJ: LIVE 2/2" :
                     "WROC: KOLORY";
         display.DrawCenteredText(label, y + 12, active ? 0x0000 : 0xFFFF);
     }

@@ -310,7 +310,9 @@ input[type=range]{
         <div class="row"><div class="rowTop"><label>EV zdjęcia</label><span class="val" id="photoEvV"></span></div><input id="photoEv" type="range" min="-8" max="8" step="0.1" oninput="setNum('photoEv',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Random min FPS</label><span class="val" id="randomFrameMinFpsV"></span></div><input id="randomFrameMinFps" type="range" min="1" max="30" step="1" oninput="setNum('randomFrameMinFps',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Random max FPS</label><span class="val" id="randomFrameMaxFpsV"></span></div><input id="randomFrameMaxFps" type="range" min="1" max="30" step="1" oninput="setNum('randomFrameMaxFps',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Random sekundy</label><span class="val" id="randomFrameSecondsV"></span></div><input id="randomFrameSeconds" type="range" min="1" max="120" step="1" oninput="setNum('randomFrameSeconds',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Random segment sekundy</label><span class="val" id="randomFrameSecondsV"></span></div><input id="randomFrameSeconds" type="range" min="1" max="15" step="1" oninput="setNum('randomFrameSeconds',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Glitch siła</label><span class="val" id="glitchStrengthV"></span></div><input id="glitchStrength" type="range" min="1" max="10" step="1" oninput="setNum('glitchStrength',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Glitch zmiana ms</label><span class="val" id="glitchChangeMsV"></span></div><input id="glitchChangeMs" type="range" min="100" max="5000" step="100" oninput="setNum('glitchChangeMs',this.value)"></div>
       </div>
     </div>
 
@@ -502,7 +504,7 @@ function put(id,value){
 }
 
 function sync(){
-  for(const k of ['captureKind','photoSource','photoFormat','videoFormat','sensorMode','paletteMode','photoWidth','photoHeight','jpgQuality','photoEv','videoSeconds','previewFps','randomFrameMinFps','randomFrameMaxFps','randomFrameSeconds','selectedColorAmount','redScale','greenScale','blueScale','lowSaveGamma','lowGrayYellowFix']) put(k,state[k]);
+  for(const k of ['captureKind','photoSource','photoFormat','videoFormat','sensorMode','paletteMode','photoWidth','photoHeight','jpgQuality','photoEv','videoSeconds','previewFps','randomFrameMinFps','randomFrameMaxFps','randomFrameSeconds','glitchStrength','glitchChangeMs','selectedColorAmount','redScale','greenScale','blueScale','lowSaveGamma','lowGrayYellowFix']) put(k,state[k]);
   const p=state.preview||{};
   for(const k of ['ev','sharpness','contrast','saturation','brightness','blackLevel','darkLevel','previewPixelSize','previewColorLevels','denoise']) put(k,p[k]);
 }

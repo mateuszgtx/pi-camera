@@ -159,7 +159,7 @@ public static partial class Program
         }
     }
 
-    private static int ModePageCount() => 7;
+    private static int ModePageCount() => 8;
 
     private static int ModeRowCount(int page) => page switch
     {
@@ -228,18 +228,25 @@ public static partial class Program
             case 4:
                 if (_modeRow == 0) { _randomFrameMinFps = Math.Clamp(_randomFrameMinFps + dir, 1, 30); if (_randomFrameMinFps > _randomFrameMaxFps) _randomFrameMaxFps = _randomFrameMinFps; }
                 else if (_modeRow == 1) { _randomFrameMaxFps = Math.Clamp(_randomFrameMaxFps + dir, 1, 30); if (_randomFrameMaxFps < _randomFrameMinFps) _randomFrameMinFps = _randomFrameMaxFps; }
-                else if (_modeRow == 2) _randomFrameSeconds = Math.Clamp(_randomFrameSeconds + dir, 1, 120);
+                else if (_modeRow == 2) _randomFrameSeconds = Math.Clamp(_randomFrameSeconds + dir, 1, 15);
                 else if (_modeRow == 3) _videoFormat = NextValue(_videoFormat, new[] { "mjpeg", "mp4" }, dir);
                 else if (_modeRow == 4) _sensorMode = NextValue(_sensorMode, new[] { "full", "bin", "fast" }, dir);
                 break;
             case 5:
+                if (_modeRow == 0) _glitchStrength = Math.Clamp(_glitchStrength + dir, 1, 10);
+                else if (_modeRow == 1) _glitchChangeMs = Math.Clamp(_glitchChangeMs + dir * 100, 100, 5000);
+                else if (_modeRow == 2) _glitchPaletteEnabled = !_glitchPaletteEnabled;
+                else if (_modeRow == 3) _glitchPixelsEnabled = !_glitchPixelsEnabled;
+                else if (_modeRow == 4) _glitchRgbEnabled = !_glitchRgbEnabled;
+                break;
+            case 6:
                 if (_modeRow == 0) _previewSettings.Ev = ClampRound(_previewSettings.Ev + dir * 0.1, -8.0, 8.0);
                 else if (_modeRow == 1) _previewSettings.BlackLevel = Math.Clamp(_previewSettings.BlackLevel + dir * 5, 0, 240);
                 else if (_modeRow == 2) _previewSettings.DarkLevel = ClampRound(_previewSettings.DarkLevel + dir * 0.05, 0.25, 2.0);
                 else if (_modeRow == 3) _previewSettings.PreviewPixelSize = NextPixelSize(_previewSettings.PreviewPixelSize, dir);
                 else if (_modeRow == 4) { _selectedColorAmount = NextColorAmount(_selectedColorAmount, dir); SetPreviewColors(_selectedColorAmount); _manualColorAmount = true; }
                 break;
-            case 6:
+            case 7:
                 if (_modeRow == 0) _previewSettings.Contrast = ClampRound(_previewSettings.Contrast + dir * 0.1, 0.0, 32.0);
                 else if (_modeRow == 1) _previewSettings.Saturation = ClampRound(_previewSettings.Saturation + dir * 0.1, 0.0, 32.0);
                 else if (_modeRow == 2) _previewSettings.Brightness = ClampRound(_previewSettings.Brightness + dir * 0.05, -1.0, 1.0);

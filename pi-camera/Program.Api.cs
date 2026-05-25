@@ -166,7 +166,7 @@ public static partial class Program
 
             app.MapGet("/api/settings/options", () => Results.Ok(new
             {
-                captureKinds = new[] { "Photo", "Video", "RandomFrame" },
+                captureKinds = new[] { "Photo", "Video", "RandomFrame", "GlitchPhoto", "GlitchVideo" },
                 photoSources = new[] { "FullHq", "Preview" },
                 photoFormats = new[] { "jpg", "png", "bmp", "raw", "rawjpg" },
                 videoFormats = new[] { "mjpeg", "mp4" },
@@ -209,6 +209,13 @@ public static partial class Program
                 randomFrameMinFps = _randomFrameMinFps,
                 randomFrameMaxFps = _randomFrameMaxFps,
                 randomFrameSeconds = _randomFrameSeconds,
+                randomSegmentSeconds = _randomFrameSeconds,
+                glitchStrength = _glitchStrength,
+                glitchChangeMs = _glitchChangeMs,
+                glitchPaletteEnabled = _glitchPaletteEnabled,
+                glitchPixelsEnabled = _glitchPixelsEnabled,
+                glitchRgbEnabled = _glitchRgbEnabled,
+                glitchVideoRecording = _glitchVideoRecording,
                 sensorMode = _sensorMode,
                 selectedColorAmount = _selectedColorAmount,
                 pixelSize = _previewSettings.PreviewPixelSize,
@@ -287,8 +294,23 @@ public static partial class Program
             if (_randomFrameMinFps > _randomFrameMaxFps)
                 _randomFrameMaxFps = _randomFrameMinFps;
 
-            if (TryGetInt(json, "randomFrameSeconds", out var randomFrameSeconds))
-                _randomFrameSeconds = Math.Clamp(randomFrameSeconds, 1, 120);
+            if (TryGetInt(json, "randomFrameSeconds", out var randomFrameSeconds) || TryGetInt(json, "randomSegmentSeconds", out randomFrameSeconds))
+                _randomFrameSeconds = Math.Clamp(randomFrameSeconds, 1, 15);
+
+            if (TryGetInt(json, "glitchStrength", out var glitchStrength))
+                _glitchStrength = Math.Clamp(glitchStrength, 1, 10);
+
+            if (TryGetInt(json, "glitchChangeMs", out var glitchChangeMs))
+                _glitchChangeMs = Math.Clamp(glitchChangeMs, 100, 5000);
+
+            if (TryGetBool(json, "glitchPaletteEnabled", out var glitchPaletteEnabled))
+                _glitchPaletteEnabled = glitchPaletteEnabled;
+
+            if (TryGetBool(json, "glitchPixelsEnabled", out var glitchPixelsEnabled))
+                _glitchPixelsEnabled = glitchPixelsEnabled;
+
+            if (TryGetBool(json, "glitchRgbEnabled", out var glitchRgbEnabled))
+                _glitchRgbEnabled = glitchRgbEnabled;
 
             if (TryGetString(json, "sensorMode", out var sensorMode))
             {
@@ -340,6 +362,16 @@ public static partial class Program
 
             preview.UpdateSettings(_previewSettings);
         }
+    }
+
+    private static bool TryGetBool(JsonElement json, string name, out bool value)
+    {
+        value = false;
+        if (!json.TryGetProperty(name, out var prop)) return false;
+        if (prop.ValueKind == JsonValueKind.True) { value = true; return true; }
+        if (prop.ValueKind == JsonValueKind.False) { value = false; return true; }
+        if (prop.ValueKind == JsonValueKind.String && bool.TryParse(prop.GetString(), out var parsed)) { value = parsed; return true; }
+        return false;
     }
 
     private static bool TryGetString(JsonElement json, string name, out string value)

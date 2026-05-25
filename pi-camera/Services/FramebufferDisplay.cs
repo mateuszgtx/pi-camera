@@ -411,11 +411,9 @@ public sealed class FramebufferDisplay : IDisposable
 
     public void DrawTextScaled(string text, int x, int y, int color, int scale)
     {
-        text = text.ToUpperInvariant();
-
         foreach (var ch in text)
         {
-            DrawCharScaled(ch, x, y, color, scale);
+            DrawCharScaled(Font5x7.Normalize(ch), x, y, color, scale);
             x += 6 * scale;
         }
     }
@@ -473,6 +471,7 @@ internal static class Font5x7
         ['J'] = [0x20,0x40,0x41,0x3F,0x01],
         ['K'] = [0x7F,0x08,0x14,0x22,0x41],
         ['L'] = [0x7F,0x40,0x40,0x40,0x40],
+        ['Ł'] = [0x7F,0x48,0x50,0x60,0x40],
         ['M'] = [0x7F,0x02,0x0C,0x02,0x7F],
         ['N'] = [0x7F,0x04,0x08,0x10,0x7F],
         ['O'] = [0x3E,0x41,0x41,0x41,0x3E],
@@ -494,5 +493,28 @@ internal static class Font5x7
         ['/'] = [0x20,0x10,0x08,0x04,0x02],
     };
 
-    public static byte[] Get(char c) => Map.TryGetValue(c, out var g) ? g : Map[' '];
+    public static char Normalize(char c)
+    {
+        c = char.ToUpperInvariant(c);
+
+        return c switch
+        {
+            'Ł' => 'Ł',
+            'Ą' => 'A',
+            'Ć' => 'C',
+            'Ę' => 'E',
+            'Ń' => 'N',
+            'Ó' => 'O',
+            'Ś' => 'S',
+            'Ź' => 'Z',
+            'Ż' => 'Z',
+            _ => c
+        };
+    }
+
+    public static byte[] Get(char c)
+    {
+        c = Normalize(c);
+        return Map.TryGetValue(c, out var g) ? g : Map[' '];
+    }
 }

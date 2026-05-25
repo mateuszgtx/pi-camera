@@ -27,7 +27,9 @@ public static partial class Program
     {
         Photo,
         Video,
-        RandomFrame
+        RandomFrame,
+        GlitchPhoto,
+        GlitchVideo
     }
 
     private enum PhotoSource
@@ -81,7 +83,21 @@ public static partial class Program
     private static int _randomFrameMinFps = 1;
     private static int _randomFrameMaxFps = 12;
     private static int _randomFrameSeconds = 10;
-    private static readonly Random _randomFrameRandom = new();
+    
+    private static int _glitchStrength = 5;
+    private static int _glitchChangeMs = 700;
+    private static bool _glitchPaletteEnabled = true;
+    private static bool _glitchPixelsEnabled = true;
+    private static bool _glitchRgbEnabled = true;
+    private static bool _glitchVideoRecording;
+    private static DateTime _glitchNextChangeUtc = DateTime.MinValue;
+    private static PreviewSettings? _glitchSavedPreviewSettings;
+    private static PaletteMode _glitchSavedPaletteMode;
+    private static double _glitchSavedRedScale;
+    private static double _glitchSavedGreenScale;
+    private static double _glitchSavedBlueScale;
+    private static int _glitchSavedSelectedColorAmount;
+private static readonly Random _randomFrameRandom = new();
     private static readonly int[] _colorChoices = new[] { 2, 4, 8, 16, 32, 64, 128, 256 };
     private static readonly int[] _pixelChoices = new[] { 1, 2, 4, 8, 16, 32, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048 };
     private static int _selectedColorAmount = 32;
@@ -217,6 +233,11 @@ public static partial class Program
         _randomFrameMinFps = IntArg(args, "--random-min-fps=", _randomFrameMinFps);
         _randomFrameMaxFps = IntArg(args, "--random-max-fps=", _randomFrameMaxFps);
         _randomFrameSeconds = IntArg(args, "--random-seconds=", _randomFrameSeconds);
+        _glitchStrength = Math.Clamp(IntArg(args, "--glitch-strength=", _glitchStrength), 1, 10);
+        _glitchChangeMs = Math.Clamp(IntArg(args, "--glitch-change-ms=", _glitchChangeMs), 100, 5000);
+        _glitchPaletteEnabled = BoolArg(args, "--glitch-palette=", _glitchPaletteEnabled);
+        _glitchPixelsEnabled = BoolArg(args, "--glitch-pixels=", _glitchPixelsEnabled);
+        _glitchRgbEnabled = BoolArg(args, "--glitch-rgb=", _glitchRgbEnabled);
         if (_randomFrameMaxFps < _randomFrameMinFps)
             _randomFrameMaxFps = _randomFrameMinFps;
 
@@ -248,7 +269,7 @@ public static partial class Program
         if (gpioPin >= 0)
             usedGpioPins.Add(gpioPin);
 
-        Console.WriteLine("Pi Camera clean modes");
+        Console.WriteLine("Cegła clean modes");
         Console.WriteLine($"Framebuffer: {framebufferPath}");
         Console.WriteLine($"Touch: {(string.IsNullOrWhiteSpace(inputPath) ? "off" : inputPath)} invertX={invertX} invertY={invertY} touchCapture={_touchCaptureEnabled}");
         Console.WriteLine($"GPIO shutter: {(gpioPin >= 0 ? $"GPIO{gpioPin}" : "off")}");
@@ -337,7 +358,7 @@ public static partial class Program
         };
 
         display.Clear(0x0000);
-        display.DrawCenteredTextScaled("PI CAMERA", height / 2 - 34, 0xFFFF, 2);
+        display.DrawCenteredTextScaled("CEGŁA", height / 2 - 34, 0xFFFF, 2);
         display.DrawCenteredText("URUCHAMIAM KAMERE...", height / 2 - 2, 0x07E0);
         display.Flush();
 
@@ -370,6 +391,10 @@ public static partial class Program
                 {
                     await RecordRandomFrameVideoAsync(outputDir, display, width, height);
                 }
+                else if (_captureKind == CaptureKind.GlitchVideo)
+                {
+                    await ToggleGlitchVideoAsync(outputDir, display, width, height);
+                }
                 else
                 {
                     _isBusy = true;
@@ -377,8 +402,12 @@ public static partial class Program
                     try
                     {
                         var fullHq = _photoSource == PhotoSource.FullHq;
+                        var glitchPhoto = _captureKind == CaptureKind.GlitchPhoto;
 
-                        DrawBusy(display, width, height, fullHq ? "FOTO HQ..." : "ZDJECIE...");
+                        DrawBusy(display, width, height, glitchPhoto ? "GLITCH FOTO..." : (fullHq ? "FOTO HQ..." : "ZDJECIE..."));
+
+                        if (glitchPhoto)
+                            ApplyGlitchOnce();
 
                         if (fullHq)
                         {
@@ -388,7 +417,7 @@ public static partial class Program
 
                         var path = await TakePhotoAsync(outputDir);
                         _lastCapturedPath = path;
-                        DrawSaved(display, width, height, fullHq ? "FOTO HQ OK" : "FOTO PREVIEW OK");
+                        DrawSaved(display, width, height, glitchPhoto ? "GLITCH OK" : (fullHq ? "FOTO HQ OK" : "FOTO PREVIEW OK"));
                         await Task.Delay(350);
                     }
                     catch (Exception ex)
@@ -399,6 +428,9 @@ public static partial class Program
                     }
                     finally
                     {
+                        if (_captureKind == CaptureKind.GlitchPhoto)
+                            RestoreGlitchSettings();
+
                         _isBusy = false;
                         if (_tab == Tab.Preview)
                             StartPreviewSafe(preview);
@@ -445,9 +477,8 @@ public static partial class Program
             return;
 
         _lastCaptureRequestUtc = now;
-        _captureKind = CaptureKind.Photo;
         _captureRequested = true;
-        Console.WriteLine($"[CAPTURE] request from {source}");
+        Console.WriteLine($"[CAPTURE] request from {source}, mode={_captureKind}");
     }
 
     private static void StartPreviewSafe(CameraPreviewService preview)

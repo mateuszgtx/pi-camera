@@ -298,7 +298,7 @@ public static partial class Program
 
     private static CaptureKind NextCaptureKind(CaptureKind current, int dir)
     {
-        var values = new[] { CaptureKind.Photo, CaptureKind.Video, CaptureKind.RandomFrame };
+        var values = new[] { CaptureKind.Photo, CaptureKind.Video, CaptureKind.RandomFrame, CaptureKind.GlitchPhoto, CaptureKind.GlitchVideo };
         var i = Array.IndexOf(values, current);
         if (i < 0)
             i = 0;
@@ -338,6 +338,8 @@ public static partial class Program
             CaptureKind.Photo => "PHOTO",
             CaptureKind.Video => "VIDEO",
             CaptureKind.RandomFrame => "RANDOM",
+            CaptureKind.GlitchPhoto => "GLITCH FOTO",
+            CaptureKind.GlitchVideo => "GLITCH VIDEO",
             _ => kind.ToString().ToUpperInvariant()
         };
     }
