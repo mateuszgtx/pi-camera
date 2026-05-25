@@ -20,7 +20,7 @@ public sealed class FramebufferDisplay : IDisposable
         _stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
     }
 
-    public void Clear(ushort color)
+    public void Clear(int color)
     {
         for (var i = 0; i < _buffer.Length; i += 2)
         {
@@ -61,7 +61,7 @@ public sealed class FramebufferDisplay : IDisposable
         if (srcW <= 0 || srcH <= 0 || rgb.Length < srcW * srcH * 3)
             return;
 
-        pixelSize = Math.Clamp(pixelSize, 1, 128);
+        pixelSize = Math.Clamp(pixelSize, 1, 32);
         colorLevels = Math.Clamp(colorLevels, 2, 256);
 
         var drawW = Math.Min(Width - dstX, srcW);
@@ -318,7 +318,7 @@ public sealed class FramebufferDisplay : IDisposable
         }
     }
 
-    public void FillRect(int x, int y, int w, int h, ushort color)
+    public void FillRect(int x, int y, int w, int h, int color)
     {
         for (var yy = y; yy < y + h; yy++)
         {
@@ -332,7 +332,7 @@ public sealed class FramebufferDisplay : IDisposable
         }
     }
 
-    public void SetPixel(int x, int y, ushort color)
+    public void SetPixel(int x, int y, int color)
     {
         if (x < 0 || y < 0 || x >= Width || y >= Height)
             return;
@@ -343,8 +343,9 @@ public sealed class FramebufferDisplay : IDisposable
             return;
 
         var index = (ry * Width + rx) * 2;
-        _buffer[index] = (byte)(color & 0xFF);
-        _buffer[index + 1] = (byte)(color >> 8);
+        var c = (ushort)Math.Clamp(color, 0, 0xFFFF);
+        _buffer[index] = (byte)(c & 0xFF);
+        _buffer[index + 1] = (byte)(c >> 8);
     }
 
     private (int x, int y) Rotate(int x, int y)
@@ -368,19 +369,19 @@ public sealed class FramebufferDisplay : IDisposable
 
 
 
-    public void DrawCenteredText(string text, int y, ushort color)
+    public void DrawCenteredText(string text, int y, int color)
     {
         var x = Math.Max(0, (Width - text.Length * 6) / 2);
         DrawText(text, x, y, color);
     }
 
-    public void DrawCenteredTextScaled(string text, int y, ushort color, int scale)
+    public void DrawCenteredTextScaled(string text, int y, int color, int scale)
     {
         var x = Math.Max(0, (Width - text.Length * 6 * scale) / 2);
         DrawTextScaled(text, x, y, color, scale);
     }
 
-    public void DrawWrappedText(string text, int x, int y, ushort color)
+    public void DrawWrappedText(string text, int x, int y, int color)
     {
         var maxChars = Math.Max(10, (Width - x * 2) / 6);
         var line = "";
@@ -403,12 +404,12 @@ public sealed class FramebufferDisplay : IDisposable
             DrawText(line, x, y, color);
     }
 
-    public void DrawText(string text, int x, int y, ushort color)
+    public void DrawText(string text, int x, int y, int color)
     {
         DrawTextScaled(text, x, y, color, 1);
     }
 
-    public void DrawTextScaled(string text, int x, int y, ushort color, int scale)
+    public void DrawTextScaled(string text, int x, int y, int color, int scale)
     {
         text = text.ToUpperInvariant();
 
@@ -419,7 +420,7 @@ public sealed class FramebufferDisplay : IDisposable
         }
     }
 
-    private void DrawCharScaled(char ch, int x, int y, ushort color, int scale)
+    private void DrawCharScaled(char ch, int x, int y, int color, int scale)
     {
         var glyph = Font5x7.Get(ch);
 
