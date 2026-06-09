@@ -27,7 +27,10 @@ public static partial class Program
 
             var app = builder.Build();
 
-            app.MapGet("/", () => Results.Text(ApiHomeHtml(), "text/html; charset=utf-8"));
+            app.UseDefaultFiles();
+            app.UseStaticFiles();
+
+            app.MapGet("/", () => Results.Redirect("/index.html"));
 
             app.MapGet("/api/status", () => Results.Ok(new
             {
@@ -121,6 +124,51 @@ public static partial class Program
                 _captureKind = CaptureKind.Video;
                 _captureRequested = true;
                 return Results.Ok(new { ok = true, recording = !_previewRecording });
+            });
+
+            app.MapGet("/api/network", () => Results.Ok(CurrentNetworkStatus()));
+
+            app.MapPost("/api/network/wifi", async (HttpRequest request) =>
+            {
+                try
+                {
+                    using var doc = await JsonDocument.ParseAsync(request.Body);
+                    var root = doc.RootElement;
+
+                    var ssid = root.TryGetProperty("ssid", out var ssidEl) ? ssidEl.GetString() ?? "" : "";
+                    var password = root.TryGetProperty("password", out var passEl) ? passEl.GetString() ?? "" : "";
+                    var connectNow = !root.TryGetProperty("connectNow", out var connectEl) || connectEl.ValueKind != JsonValueKind.False;
+
+                    await AddOrConnectWifiAsync(ssid, password, connectNow);
+                    SetNetworkStatus("WiFi OK: " + ssid);
+
+                    return Results.Ok(new { ok = true, message = "WiFi saved", network = CurrentNetworkStatus() });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API WIFI] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), network = CurrentNetworkStatus() });
+                }
+            });
+
+            app.MapPost("/api/network/wifi/connect", async (HttpRequest request) =>
+            {
+                try
+                {
+                    using var doc = await JsonDocument.ParseAsync(request.Body);
+                    var name = doc.RootElement.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
+                    if (string.IsNullOrWhiteSpace(name))
+                        return Results.BadRequest(new { ok = false, message = "Empty network name" });
+
+                    await ConnectSavedWifiAsync(name);
+                    SetNetworkStatus("Połączono: " + name);
+                    return Results.Ok(new { ok = true, network = CurrentNetworkStatus() });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API WIFI CONNECT] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), network = CurrentNetworkStatus() });
+                }
             });
 
             app.MapGet("/api/photos", () =>

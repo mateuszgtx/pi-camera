@@ -128,7 +128,7 @@ public static partial class Program
                 var parts = line.Split(':', 2);
                 if (parts.Length != 2) continue;
 
-                var name = parts[0].Replace("\\:", ":").Trim();
+                var name = UnescapeNmcliValue(parts[0]).Trim();
                 var type = parts[1].Trim().ToLowerInvariant();
                 if (type.Contains("wireless") || type.Contains("wifi") || type.Contains("802-11"))
                     list.Add(name);
@@ -145,6 +145,11 @@ public static partial class Program
             _savedWifiConnections = new List<string>();
             SetNetworkStatus("nmcli: " + ShortError(ex.Message));
         }
+    }
+
+    private static string UnescapeNmcliValue(string value)
+    {
+        return value.Replace("\\:", ":").Replace("\\\\", "\\");
     }
 
     private static string SelectedWifiName()
@@ -223,6 +228,76 @@ public static partial class Program
     private static async Task ConnectSavedWifiAsync(string connectionName)
     {
         await RunProcessAsync("nmcli", new List<string> { "connection", "up", "id", connectionName }, 15000);
+    }
+
+
+    private static async Task AddOrConnectWifiAsync(string ssid, string password, bool connectNow)
+    {
+        ssid = ssid.Trim();
+        password = password.Trim();
+
+        if (string.IsNullOrWhiteSpace(ssid))
+            throw new ArgumentException("SSID is empty");
+
+        if (!IsWifiRadioOn())
+            await SetWifiRadioAsync(true);
+
+        var connectionName = ssid;
+
+        try
+        {
+            var existing = RunProcessText("nmcli", new[] { "-t", "-f", "NAME", "connection", "show" }, 2500)
+                .Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => UnescapeNmcliValue(x).Trim())
+                .Any(x => x.Equals(connectionName, StringComparison.OrdinalIgnoreCase));
+
+            if (existing)
+            {
+                if (!string.IsNullOrEmpty(password))
+                {
+                    await RunProcessAsync("nmcli", new List<string> { "connection", "modify", connectionName, "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password }, 8000);
+                }
+
+                if (connectNow)
+                    await ConnectSavedWifiAsync(connectionName);
+            }
+            else
+            {
+                var args = new List<string>
+                {
+                    "device", "wifi", "connect", ssid,
+                    "ifname", "wlan0",
+                    "name", connectionName
+                };
+
+                if (!string.IsNullOrEmpty(password))
+                {
+                    args.Add("password");
+                    args.Add(password);
+                }
+
+                await RunProcessAsync("nmcli", args, 25000);
+            }
+        }
+        finally
+        {
+            EnsureWifiConnectionsLoaded(force: true);
+        }
+    }
+
+    private static object CurrentNetworkStatus()
+    {
+        EnsureWifiConnectionsLoaded(force: true);
+        return new
+        {
+            wifiRadio = WifiRadioStatusLabel(),
+            hotspot = HotspotStatusLabel(),
+            active = ActiveNetworkLabel(),
+            ip = IpLabel(),
+            saved = _savedWifiConnections.ToArray(),
+            selected = SelectedWifiName(),
+            status = _networkStatus
+        };
     }
 
     private static string ActiveNetworkLabel()

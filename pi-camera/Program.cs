@@ -112,6 +112,7 @@ private static readonly Random _randomFrameRandom = new();
     private static bool _swapRedBlue;
     private static readonly object _lastPreviewLock = new();
     private static readonly object _settingsLock = new();
+    private static readonly object _displayLock = new();
     private static byte[]? _lastPreviewRgb;
     private static int _lastPreviewWidth;
     private static int _lastPreviewHeight;
@@ -332,24 +333,54 @@ private static readonly Random _randomFrameRandom = new();
                     _lastPreviewHeight = frame.Height;
                 }
 
-                display.DrawRgbFrameAdjusted(
-                    frame.Rgb,
-                    frame.Width,
-                    frame.Height,
-                    0,
-                    0,
-                    _previewSettings.BlackLevel,
-                    _previewSettings.DarkLevel,
-                    EffectivePreviewPixelSize(frame.Width),
-                    _previewSettings.PreviewColorLevels,
-                    _redScale,
-                    _greenScale,
-                    _blueScale,
-                    PaletteModeArg());
+                int blackLevel;
+                double darkLevel;
+                int pixelSize;
+                int colorLevels;
+                double redScale;
+                double greenScale;
+                double blueScale;
+                string paletteMode;
+                string lookPreset;
+                double lowSaveGamma;
+                int lowGrayYellowFix;
 
-                DrawTopBar(display, width);
-                DrawTabs(display, width, height);
-                display.Flush();
+                lock (_settingsLock)
+                {
+                    blackLevel = _previewSettings.BlackLevel;
+                    darkLevel = _previewSettings.DarkLevel;
+                    pixelSize = EffectivePreviewPixelSize(frame.Width);
+                    colorLevels = _previewSettings.PreviewColorLevels;
+                    redScale = _redScale;
+                    greenScale = _greenScale;
+                    blueScale = _blueScale;
+                    paletteMode = PaletteModeArg();
+                    lookPreset = _lookPreset;
+                    lowSaveGamma = _lowSaveGamma;
+                    lowGrayYellowFix = _lowGrayYellowFix;
+                }
+
+                lock (_displayLock)
+                {
+                    display.DrawRgbFrameAdjusted(
+                        frame.Rgb,
+                        frame.Width,
+                        frame.Height,
+                        0,
+                        0,
+                        blackLevel,
+                        darkLevel,
+                        pixelSize,
+                        colorLevels,
+                        redScale,
+                        greenScale,
+                        blueScale,
+                        paletteMode);
+
+                    DrawTopBar(display, width);
+                    DrawTabs(display, width, height);
+                    display.Flush();
+                }
 
                 WritePreviewRecordingFrameIfNeeded(frame.Rgb, frame.Width, frame.Height);
             }
