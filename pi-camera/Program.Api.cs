@@ -98,9 +98,19 @@ public static partial class Program
                 if (_isBusy)
                     return Results.Conflict(new { ok = false, message = "Camera busy" });
 
-                _captureKind = CaptureKind.Photo;
+                if (_captureKind == CaptureKind.Video || _captureKind == CaptureKind.RandomFrame || _captureKind == CaptureKind.GlitchVideo)
+                    return Results.BadRequest(new { ok = false, message = "Current mode is video. Use video toggle." });
+
                 _captureRequested = true;
-                return Results.Ok(new { ok = true, message = "Capture requested" });
+                return Results.Ok(new
+                {
+                    ok = true,
+                    captureKind = _captureKind.ToString(),
+                    glitchPhotoCount = _captureKind == CaptureKind.GlitchPhoto ? _glitchPhotoCount : 1,
+                    message = _captureKind == CaptureKind.GlitchPhoto
+                        ? (_glitchPhotoCount > 1 ? $"Glitch burst x{_glitchPhotoCount} requested" : "Glitch capture requested")
+                        : "Capture requested"
+                });
             });
 
             app.MapPost("/api/video/toggle", () =>
@@ -176,6 +186,7 @@ public static partial class Program
                 colorChoices = _colorChoices,
                 pixelChoices = _pixelChoices,
                 maxPreviewPixelSize = 2048,
+                glitchPhotoCountChoices = new[] { 1, 2, 3, 4, 5, 6, 8, 10, 12 },
                 livePreviewPixelMax = _livePreviewPixelMax,
                 previewPixelMaxForCurrentPhotoSource = MaxPixelSizeForCurrentSource(),
                 pixelMeaning = "1 = mocny pixel-art / duże bloki, max = najlepsza jakość / najmniejsze bloki"
@@ -215,6 +226,7 @@ public static partial class Program
                 glitchPaletteEnabled = _glitchPaletteEnabled,
                 glitchPixelsEnabled = _glitchPixelsEnabled,
                 glitchRgbEnabled = _glitchRgbEnabled,
+                glitchPhotoCount = _glitchPhotoCount,
                 glitchVideoRecording = _glitchVideoRecording,
                 sensorMode = _sensorMode,
                 selectedColorAmount = _selectedColorAmount,
@@ -311,6 +323,9 @@ public static partial class Program
 
             if (TryGetBool(json, "glitchRgbEnabled", out var glitchRgbEnabled))
                 _glitchRgbEnabled = glitchRgbEnabled;
+
+            if (TryGetInt(json, "glitchPhotoCount", out var glitchPhotoCount))
+                _glitchPhotoCount = Math.Clamp(glitchPhotoCount, 1, 12);
 
             if (TryGetString(json, "sensorMode", out var sensorMode))
             {

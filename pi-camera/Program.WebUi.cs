@@ -136,15 +136,17 @@ button.round{width:58px;height:58px;border-radius:50%;padding:0;font-size:22px}
 .drawer{
   position:fixed;
   left:0;right:0;bottom:0;
-  max-height:86vh;
-  background:rgba(10,10,10,.98);
+  max-height:62vh;
+  background:rgba(10,10,10,.96);
   border-top:1px solid #2b2b2b;
   border-radius:24px 24px 0 0;
   display:none;
   overflow:hidden;
   box-shadow:0 -20px 50px rgba(0,0,0,.85);
   z-index:20;
+  backdrop-filter:blur(14px);
 }
+#photos{max-height:86vh}
 .drawer.open{display:flex;flex-direction:column}
 .handle{width:48px;height:5px;border-radius:999px;background:#444;margin:10px auto 4px}
 .drawerHead{
@@ -209,26 +211,40 @@ input[type=range]{
 .mini{font-size:12px;color:#888;line-height:1.45;margin-top:8px}
 
 /* gallery */
-.galleryTools{display:grid;grid-template-columns:1fr auto;gap:8px;margin:4px 0 10px}
+.galleryTools{display:grid;grid-template-columns:1fr auto;gap:8px;margin:4px 0 12px}
+.photosGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:12px;padding-bottom:10px}
 .photo{
-  display:grid;
-  grid-template-columns:64px 1fr auto;
-  gap:10px;
-  align-items:center;
-  padding:10px 0;
-  border-bottom:1px solid #222;
+  background:#151515;
+  border:1px solid #292929;
+  border-radius:18px;
+  overflow:hidden;
+  box-shadow:0 8px 22px rgba(0,0,0,.28);
 }
+.thumbBtn{display:block;width:100%;aspect-ratio:1/1;border:0;background:#202020;padding:0;border-radius:0;min-height:0;overflow:hidden}
 .thumb{
-  width:64px;height:48px;border-radius:12px;background:#222;object-fit:cover;border:1px solid #333;
+  width:100%;height:100%;display:block;object-fit:cover;background:#222;border:0;border-radius:0;
 }
-.photo a{color:#fff;text-decoration:none;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.meta{font-size:12px;color:#888;margin-top:3px}
+.fileIcon{width:100%;height:100%;display:grid;place-items:center;font-size:34px;background:#202020;color:#aaa}
+.photoInfo{padding:10px;display:grid;gap:8px}
+.photoName{font-size:12px;font-weight:800;line-height:1.25;color:#fff;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;min-height:30px}
+.meta{font-size:12px;color:#888}
+.photoActions{display:grid;grid-template-columns:1fr 1fr;gap:6px}.photoActions button{min-height:36px;border-radius:12px;font-size:12px;padding:7px}
+.lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;place-items:center;z-index:40;padding:18px}.lightbox.open{display:grid}.lightbox img{max-width:96vw;max-height:88vh;object-fit:contain;border-radius:18px}.lightbox button{position:fixed;top:calc(12px + var(--safe-top));right:12px}
+@media (min-width:900px){
+  .drawer{top:12px;right:12px;bottom:12px;left:auto;width:min(460px,42vw);max-height:none;border:1px solid #2b2b2b;border-radius:24px;box-shadow:-20px 0 50px rgba(0,0,0,.72)}
+  #photos{width:min(760px,54vw)}
+  .handle{display:none}.drawerHead{padding-top:14px}.drawerBody{padding-bottom:18px}
+}
+@media (max-width:760px){
+  .galleryBtn{display:none!important}
+  #photos{display:none!important}
+}
 @media (max-width:360px){
   .actions{gap:6px}
   .actions button{font-size:12px;padding-left:5px;padding-right:5px}
   .modePills button{padding:7px 10px}
 }
-@media (max-width:520px){.tabs{overflow-x:auto;justify-content:flex-start}.row{padding:12px}.bottom button{font-size:12px;padding:10px 8px}.modePills{bottom:10px}.drawer{max-height:82vh}}
+@media (max-width:520px){.tabs{overflow-x:auto;justify-content:flex-start}.row{padding:12px}.bottom button{font-size:12px;padding:10px 8px}.modePills{bottom:10px}.drawer{max-height:58vh}}
 </style>
 </head>
 <body>
@@ -257,7 +273,7 @@ input[type=range]{
       <button class="capture" onclick="capture()">Zdjęcie</button>
       <button onclick="toggleVideo()">Wideo</button>
       <button onclick="openDrawer('settings')">Ustaw.</button>
-      <button onclick="openDrawer('photos');loadPhotos()">Galeria</button>
+      <button class="galleryBtn" onclick="openDrawer('photos');loadPhotos()">Galeria</button>
     </div>
   </div>
 </div>
@@ -275,6 +291,11 @@ input[type=range]{
     </div>
     <div id="photosList"></div>
   </div>
+</div>
+
+<div id="lightbox" class="lightbox" onclick="closeLightbox()">
+  <button class="closeBtn" onclick="closeLightbox();event.stopPropagation()">Zamknij</button>
+  <img id="lightboxImg" alt="Powiększone zdjęcie">
 </div>
 
 <div id="settings" class="drawer">
@@ -313,6 +334,7 @@ input[type=range]{
         <div class="row"><div class="rowTop"><label>Random segment sekundy</label><span class="val" id="randomFrameSecondsV"></span></div><input id="randomFrameSeconds" type="range" min="1" max="15" step="1" oninput="setNum('randomFrameSeconds',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Glitch siła</label><span class="val" id="glitchStrengthV"></span></div><input id="glitchStrength" type="range" min="1" max="10" step="1" oninput="setNum('glitchStrength',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Glitch zmiana ms</label><span class="val" id="glitchChangeMsV"></span></div><input id="glitchChangeMs" type="range" min="100" max="5000" step="100" oninput="setNum('glitchChangeMs',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Glitch zdjęć</label></div><select id="glitchPhotoCount" onchange="setNum('glitchPhotoCount',this.value)"></select><div class="mini">Przy GLITCH FOTO zrobi kilka losowych wersji jednego ujęcia.</div></div>
       </div>
     </div>
 
@@ -373,6 +395,20 @@ function openCurrent(){
   window.open(location.href,'_blank');
 }
 
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function openLightbox(url){
+  $('lightboxImg').src=url;
+  $('lightbox').classList.add('open');
+}
+
+function closeLightbox(){
+  $('lightbox').classList.remove('open');
+  $('lightboxImg').src='';
+}
+
 function tab(id){
   for(const x of ['basic','photo','look','advanced']){
     $(x).classList.toggle('on',x===id);
@@ -419,9 +455,20 @@ function previewMode(mode){
 addEventListener('resize',()=>previewMode(currentMode));
 
 async function capture(){
-  toast('Robię zdjęcie...');
+  toast(state.captureKind==='GlitchPhoto' ? 'Robię glitch...' : 'Robię zdjęcie...');
   const r=await fetch('/api/capture',{method:'POST'});
-  toast(r.ok?'Zdjęcie zlecone':'Błąd zdjęcia');
+  let msg='Błąd zdjęcia';
+  try{
+    const data=await r.json();
+    if(r.ok){
+      msg = data.captureKind==='GlitchPhoto' && Number(data.glitchPhotoCount||1)>1
+        ? `Glitch x${data.glitchPhotoCount} zlecony`
+        : 'Zdjęcie zlecone';
+    }else{
+      msg = data.message || msg;
+    }
+  }catch{}
+  toast(msg);
 }
 
 async function toggleVideo(){
@@ -438,17 +485,24 @@ function sizeText(n){
 
 async function loadPhotos(){
   const box=$('photosList');
+  box.className='';
   box.innerHTML='<div class="mini">Ładuję...</div>';
   try{
     const r=await fetch('/api/photos?ts='+Date.now());
     const list=await r.json();
-    if(!list.length){box.innerHTML='<div class="mini">Brak zdjęć/filmów.</div>';return}
+    if(!list.length){box.className='';box.innerHTML='<div class="mini">Brak zdjęć/filmów.</div>';return}
+    box.className='photosGrid';
     box.innerHTML=list.map(p=>{
+      const name=esc(p.name);
+      const enc=encodeURIComponent(p.name);
       const isImg=/\.(jpg|jpeg|png|bmp)$/i.test(p.name);
-      const thumb=isImg?`<img class="thumb" src="${p.url}">`:`<div class="thumb"></div>`;
-      return `<div class="photo">${thumb}<div><a href="${p.url}" target="_blank">${p.name}</a><div class="meta">${sizeText(p.size)}</div></div><button class="small danger" onclick="delPhoto('${encodeURIComponent(p.name)}')">Usuń</button></div>`;
+      const preview=isImg
+        ? `<button class="thumbBtn" onclick="openLightbox('${p.url}')"><img class="thumb" src="${p.url}" loading="lazy"></button>`
+        : `<a class="thumbBtn" href="${p.url}" target="_blank"><div class="fileIcon">🎬</div></a>`;
+      return `<div class="photo">${preview}<div class="photoInfo"><div class="photoName" title="${name}">${name}</div><div class="meta">${sizeText(p.size)}</div><div class="photoActions"><button class="ghost" onclick="window.open('${p.url}','_blank')">Otwórz</button><button class="danger" onclick="delPhoto('${enc}')">Usuń</button></div></div></div>`;
     }).join('');
   }catch(e){
+    box.className='';
     box.innerHTML='<div class="mini">Nie udało się wczytać galerii.</div>';
   }
 }
@@ -476,6 +530,7 @@ async function loadSettings(){
   fillSelect('videoFormat',options.videoFormats);
   fillSelect('sensorMode',options.sensorModes);
   fillSelect('paletteMode',options.paletteModes);
+  fillSelect('glitchPhotoCount',options.glitchPhotoCountChoices || [1,2,3,4,5,6,8,10,12]);
   fillSelect('denoise',options.denoise);
 
   sync();
@@ -504,7 +559,7 @@ function put(id,value){
 }
 
 function sync(){
-  for(const k of ['captureKind','photoSource','photoFormat','videoFormat','sensorMode','paletteMode','photoWidth','photoHeight','jpgQuality','photoEv','videoSeconds','previewFps','randomFrameMinFps','randomFrameMaxFps','randomFrameSeconds','glitchStrength','glitchChangeMs','selectedColorAmount','redScale','greenScale','blueScale','lowSaveGamma','lowGrayYellowFix']) put(k,state[k]);
+  for(const k of ['captureKind','photoSource','photoFormat','videoFormat','sensorMode','paletteMode','photoWidth','photoHeight','jpgQuality','photoEv','videoSeconds','previewFps','randomFrameMinFps','randomFrameMaxFps','randomFrameSeconds','glitchStrength','glitchChangeMs','glitchPhotoCount','selectedColorAmount','redScale','greenScale','blueScale','lowSaveGamma','lowGrayYellowFix']) put(k,state[k]);
   const p=state.preview||{};
   for(const k of ['ev','sharpness','contrast','saturation','brightness','blackLevel','darkLevel','previewPixelSize','previewColorLevels','denoise']) put(k,p[k]);
 }
@@ -561,7 +616,7 @@ function setPreviewNum(k,val){
   scheduleSave();
 }
 
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawers()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeLightbox();closeDrawers();}});
 previewMode('raw');
 loadSettings();
 loadPhotos();

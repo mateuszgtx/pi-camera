@@ -16,11 +16,11 @@ namespace pi_camera;
 
 public static partial class Program
 {
-    private static async Task<string> TakePhotoAsync(string outputDir)
+    private static async Task<string> TakePhotoAsync(string outputDir, string? suffix = null)
     {
         Directory.CreateDirectory(outputDir);
 
-        var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmssfff");
         var isRaw = _photoFormat.Equals("raw", StringComparison.OrdinalIgnoreCase) ||
                     _photoFormat.Equals("rawjpg", StringComparison.OrdinalIgnoreCase);
 
@@ -33,7 +33,8 @@ public static partial class Program
             _ => "jpg"
         };
 
-        var finalPath = Path.Combine(outputDir, $"IMG_{stamp}.{finalExt}");
+        var suffixPart = string.IsNullOrWhiteSpace(suffix) ? string.Empty : suffix;
+        var finalPath = Path.Combine(outputDir, $"IMG_{stamp}{suffixPart}.{finalExt}");
 
         if (_photoSource == PhotoSource.Preview && !isRaw)
         {

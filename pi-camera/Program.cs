@@ -89,6 +89,7 @@ public static partial class Program
     private static bool _glitchPaletteEnabled = true;
     private static bool _glitchPixelsEnabled = true;
     private static bool _glitchRgbEnabled = true;
+    private static int _glitchPhotoCount = 4;
     private static bool _glitchVideoRecording;
     private static DateTime _glitchNextChangeUtc = DateTime.MinValue;
     private static PreviewSettings? _glitchSavedPreviewSettings;
@@ -238,6 +239,7 @@ private static readonly Random _randomFrameRandom = new();
         _glitchPaletteEnabled = BoolArg(args, "--glitch-palette=", _glitchPaletteEnabled);
         _glitchPixelsEnabled = BoolArg(args, "--glitch-pixels=", _glitchPixelsEnabled);
         _glitchRgbEnabled = BoolArg(args, "--glitch-rgb=", _glitchRgbEnabled);
+        _glitchPhotoCount = Math.Clamp(IntArg(args, "--glitch-photo-count=", _glitchPhotoCount), 1, 12);
         if (_randomFrameMaxFps < _randomFrameMinFps)
             _randomFrameMaxFps = _randomFrameMinFps;
 
@@ -403,11 +405,11 @@ private static readonly Random _randomFrameRandom = new();
                     {
                         var fullHq = _photoSource == PhotoSource.FullHq;
                         var glitchPhoto = _captureKind == CaptureKind.GlitchPhoto;
+                        var glitchCount = glitchPhoto ? Math.Clamp(_glitchPhotoCount, 1, 12) : 1;
 
-                        DrawBusy(display, width, height, glitchPhoto ? "GLITCH FOTO..." : (fullHq ? "FOTO HQ..." : "ZDJECIE..."));
-
-                        if (glitchPhoto)
-                            ApplyGlitchOnce();
+                        DrawBusy(display, width, height, glitchPhoto
+                            ? (glitchCount > 1 ? $"GLITCH x{glitchCount}..." : "GLITCH FOTO...")
+                            : (fullHq ? "FOTO HQ..." : "ZDJECIE..."));
 
                         if (fullHq)
                         {
@@ -415,10 +417,33 @@ private static readonly Random _randomFrameRandom = new();
                             await Task.Delay(500);
                         }
 
-                        var path = await TakePhotoAsync(outputDir);
-                        _lastCapturedPath = path;
-                        DrawSaved(display, width, height, glitchPhoto ? "GLITCH OK" : (fullHq ? "FOTO HQ OK" : "FOTO PREVIEW OK"));
-                        await Task.Delay(350);
+                        string? lastPath = null;
+
+                        for (var i = 0; i < glitchCount; i++)
+                        {
+                            if (glitchPhoto)
+                            {
+                                ApplyGlitchOnce();
+
+                                if (_photoSource == PhotoSource.Preview)
+                                    await Task.Delay(120);
+
+                                if (glitchCount > 1)
+                                    DrawBusy(display, width, height, $"GLITCH {i + 1}/{glitchCount}...");
+                            }
+
+                            var suffix = glitchPhoto && glitchCount > 1 ? $"_G{i + 1:00}" : null;
+                            lastPath = await TakePhotoAsync(outputDir, suffix);
+
+                            if (glitchPhoto && glitchCount > 1 && i < glitchCount - 1)
+                                await Task.Delay(90);
+                        }
+
+                        _lastCapturedPath = lastPath;
+                        DrawSaved(display, width, height, glitchPhoto
+                            ? (glitchCount > 1 ? $"GLITCH x{glitchCount} OK" : "GLITCH OK")
+                            : (fullHq ? "FOTO HQ OK" : "FOTO PREVIEW OK"));
+                        await Task.Delay(glitchPhoto && glitchCount > 1 ? 650 : 350);
                     }
                     catch (Exception ex)
                     {
