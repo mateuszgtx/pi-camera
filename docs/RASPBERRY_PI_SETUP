@@ -1,0 +1,276 @@
+# Raspberry Pi setup
+
+This guide describes how to run `pi-camera` on Raspberry Pi OS.
+
+## 1. Prepare the system
+
+Update the system and install external tools used by the application:
+
+```bash
+sudo apt update
+sudo apt install -y rpicam-apps ffmpeg network-manager
+```
+
+Verify that the camera tools are available:
+
+```bash
+rpicam-vid --version
+rpicam-still --version
+```
+
+Test the camera outside the application:
+
+```bash
+rpicam-still -o test.jpg
+```
+
+## 2. Framebuffer display
+
+The default framebuffer path is:
+
+```text
+/dev/fb0
+```
+
+Check whether it exists:
+
+```bash
+ls -l /dev/fb0
+```
+
+If your display uses another framebuffer device, pass it with:
+
+```bash
+--fb=/dev/fb1
+```
+
+## 3. Touchscreen
+
+Find the touchscreen input device:
+
+```bash
+ls -l /dev/input/
+cat /proc/bus/input/devices
+```
+
+Start the application with the selected event device:
+
+```bash
+--touch=/dev/input/event0
+```
+
+If the axes are inverted, use:
+
+```bash
+--invert-x=true
+--invert-y=true
+```
+
+`invertY` defaults to `true` in the application.
+
+## 4. GPIO buttons
+
+Main shutter button:
+
+```bash
+--gpio-pin=17
+```
+
+Additional buttons:
+
+```bash
+--button-tab-pin=27
+--button-mode-pin=22
+--button-prev-pin=5
+--button-next-pin=6
+--button-gallery-pin=13
+--button-video-pin=19
+```
+
+Buttons are configured as `InputPullUp`, so the simplest wiring is:
+
+```text
+GPIO ---- button ---- GND
+```
+
+## 5. Build and publish
+
+From the project directory:
+
+```bash
+cd pi-camera-master/pi-camera
+dotnet restore
+dotnet publish -c Release -r linux-arm64 --self-contained true -o ./publish
+```
+
+For 32-bit Raspberry Pi OS, publish with `linux-arm` instead of `linux-arm64`:
+
+```bash
+dotnet publish -c Release -r linux-arm --self-contained true -o ./publish
+```
+
+Copy the published files to `/opt/pi-camera`:
+
+```bash
+sudo mkdir -p /opt/pi-camera
+sudo cp -r ./publish/* /opt/pi-camera/
+sudo chmod +x /opt/pi-camera/pi-camera
+```
+
+## 6. First manual start
+
+```bash
+sudo /opt/pi-camera/pi-camera \
+  --fb=/dev/fb0 \
+  --width=480 \
+  --height=320 \
+  --out=/home/admin/Pictures/PiCamera \
+  --api=true \
+  --api-url=http://0.0.0.0:5000
+```
+
+If everything works, the `CEGŁA` interface appears on the display and the web panel becomes available at:
+
+```text
+http://<RASPBERRY_PI_IP>:5000
+```
+
+Get the Raspberry Pi IP address with:
+
+```bash
+hostname -I
+```
+
+## 7. systemd service
+
+Create a systemd unit:
+
+```bash
+sudo nano /etc/systemd/system/pi-camera.service
+```
+
+Paste:
+
+```ini
+[Unit]
+Description=Pi Camera
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/pi-camera
+ExecStart=/opt/pi-camera/pi-camera --fb=/dev/fb0 --width=480 --height=320 --out=/home/admin/Pictures/PiCamera --api=true --api-url=http://0.0.0.0:5000
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable pi-camera
+sudo systemctl start pi-camera
+```
+
+View logs:
+
+```bash
+sudo journalctl -u pi-camera -f
+```
+
+## 8. Wi-Fi and hotspot
+
+The application controls Wi-Fi through `nmcli`. Check NetworkManager status manually with:
+
+```bash
+nmcli radio wifi
+nmcli connection show
+```
+
+Default hotspot settings:
+
+```text
+SSID: PiCamera
+Password: picamera123
+```
+
+Override them with startup arguments:
+
+```bash
+--hotspot-ssid=MyCamera
+--hotspot-pass=my-password-123
+```
+
+## 9. Battery status
+
+The application tries to read battery status from:
+
+1. a file passed through `--battery-file`,
+2. `/sys/class/power_supply/*/capacity`,
+3. a command passed through `--battery-command`.
+
+Example using a file:
+
+```bash
+--battery-file=/tmp/battery_percent
+```
+
+Example using a command:
+
+```bash
+--battery-command="cat /sys/class/power_supply/BAT0/capacity"
+```
+
+The value can be either a number such as `74` or a percentage such as `74%`.
+
+## 10. Troubleshooting
+
+### Camera preview does not start
+
+Test `rpicam-vid` directly:
+
+```bash
+rpicam-vid --codec mjpeg -t 3000 --width 480 --height 320 --nopreview -o test.mjpg
+```
+
+### Full HQ photo capture does not work
+
+Test `rpicam-still` directly:
+
+```bash
+rpicam-still --nopreview --immediate -o test.jpg
+```
+
+### Video conversion fails
+
+Check `ffmpeg`:
+
+```bash
+ffmpeg -version
+```
+
+If conversion fails, the temporary `*.rawmjpeg` source file is usually left in the output directory for debugging.
+
+### Permission problems
+
+For initial testing, run the application with `sudo`. For a production setup, configure the correct groups and `udev` rules for framebuffer, input and GPIO access.
+
+### Web panel is not reachable
+
+Check that the application was started with:
+
+```bash
+--api=true --api-url=http://0.0.0.0:5000
+```
+
+Then verify the Raspberry Pi IP and local firewall settings:
+
+```bash
+hostname -I
+sudo ss -ltnp | grep 5000
+```
