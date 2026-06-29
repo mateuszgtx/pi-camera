@@ -1,4 +1,4 @@
-CEGŁA
+## CEGŁA
 
 `pi-camera` is a C#/.NET application for Raspberry Pi that turns a Pi, a camera module and a small framebuffer/TFT screen into a compact digital camera. It provides a live camera preview, photo and video capture modes, a local gallery, touchscreen support, GPIO buttons, Wi-Fi/hotspot controls, and an HTTP web panel with a REST-style API.
 
