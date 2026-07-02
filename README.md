@@ -11,12 +11,16 @@ The application uses Raspberry Pi Camera tools (`rpicam-vid` and `rpicam-still`)
 * Photo sources: `Full HQ` through `rpicam-still`, or `Preview` from the current preview frame.
 * Video recording from preview frames to `AVI/MJPEG` or `MP4` through `ffmpeg`.
 * `RandomFrame` video mode, where each segment is recorded with a random FPS.
+* `Stream` capture mode for sending the processed or raw preview to an external streaming URL.
 * `GlitchPhoto` and `GlitchVideo` modes with randomized palette, pixelation and RGB channel scaling.
 * Visual presets: `NORMAL`, `LOW32`, `LOW16`, `RETRO8`, `MONO4`.
 * Color palettes: `GREEN565`, `BALANCED`, `GREEN`, `YELLOW`, `BLUE`, `RED`, `CYAN`, `MAGENTA`, `AMBER`, `GRAY`, `WARM`, `COLD`.
 * Keyboard, touchscreen and GPIO button control.
 * On-device media gallery.
-* Static web UI from `wwwroot/index.html` and HTTP API endpoints.
+* Static web UI from `wwwroot/index.html` with one context-aware main action button.
+* HTTP API endpoints for status, preview, capture action, media gallery, settings, stream, audio, Wi-Fi and hotspot controls.
+* Persistent settings saved to a JSON file and restored after restart.
+* Reset-to-defaults action from the web panel and HTTP API.
 * Wi-Fi and hotspot management through `NetworkManager`/`nmcli`.
 * Optional battery status reading from a file, `/sys/class/power_supply`, or a custom command.
 
@@ -28,16 +32,21 @@ pi-camera-master/
 ├── pi-camera/
 │   ├── Program.cs                    # application startup, argument parsing, main loop
 │   ├── Program.Api.cs                # web panel and HTTP API endpoints
+│   ├── Program.Audio.cs              # audio input and Bluetooth audio helpers
 │   ├── Program.Capture.cs            # photo capture through rpicam-still
 │   ├── Program.Display.cs            # screen UI, tabs, gallery, status messages
 │   ├── Program.Glitch.cs             # glitch effects for photos and videos
 │   ├── Program.ImageProcessing.cs    # pixelation, palettes and visual processing
 │   ├── Program.Input.cs              # keyboard, touch and GPIO input
 │   ├── Program.Network.cs            # Wi-Fi, hotspot, IP and battery status
+│   ├── Program.PersistentSettings.cs # JSON settings load/save/reset
 │   ├── Program.Settings.cs           # presets, argument helpers and setting logic
+│   ├── Program.Stream.cs             # external video streaming
 │   ├── Program.Video.cs              # MJPEG/MP4 recording and RandomFrame video
+│   ├── Program.WebUi.cs              # static web UI helper
 │   ├── Services/
 │   │   ├── CameraPreviewService.cs   # rpicam-vid -> MJPEG -> RGB frames
+│   │   ├── CameraService.cs          # camera service helpers
 │   │   ├── FramebufferDisplay.cs     # direct drawing to /dev/fb0
 │   │   ├── GpioShutterService.cs     # GPIO button handling
 │   │   ├── TouchInputService.cs      # /dev/input/eventX reader
@@ -106,6 +115,7 @@ sudo dotnet run --project pi-camera/pi-camera.csproj -- \
   --width=480 \
   --height=320 \
   --out=/home/admin/Pictures/PiCamera \
+  --settings-file=/home/admin/.config/pi-camera/settings.json \
   --api=true \
   --api-url=http://0.0.0.0:5000
 ```
@@ -115,6 +125,24 @@ After startup:
 * the device screen shows the `CEGŁA` camera interface,
 * photos and videos are saved to the directory passed with `--out`,
 * the web panel is available at `http://<RASPBERRY_PI_IP>:5000`.
+
+## Persistent settings
+
+Settings changed from the web panel or from the device controls are saved automatically to a JSON file. On the next start, the application first applies command-line defaults and then overlays the saved settings from disk.
+
+Default settings path:
+
+```text
+~/.config/pi-camera/settings.json
+```
+
+You can choose a different path with:
+
+```bash
+--settings-file=/var/lib/pi-camera/settings.json
+```
+
+Use **Reset defaults** in the web panel, or call `POST /api/settings/reset`, to restore the built-in defaults and overwrite the saved JSON file.
 
 ## Example with touchscreen and GPIO buttons
 
@@ -133,6 +161,7 @@ sudo ./publish/pi-camera \
   --button-gallery-pin=13 \
   --button-video-pin=19 \
   --out=/home/admin/Pictures/PiCamera \
+  --settings-file=/home/admin/.config/pi-camera/settings.json \
   --api=true \
   --api-url=http://0.0.0.0:5000
 ```
@@ -163,11 +192,12 @@ sudo cp -r ./publish/* /opt/pi-camera/
 sudo chmod +x /opt/pi-camera/pi-camera
 ```
 
-Create the media output directory:
+Create the media output directory and a directory for persistent settings:
 
 ```bash
 sudo mkdir -p /home/admin/Pictures/PiCamera
 sudo chown -R admin:admin /home/admin/Pictures/PiCamera
+sudo mkdir -p /var/lib/pi-camera
 ```
 
 ### 3. Create the systemd service file
@@ -196,6 +226,7 @@ ExecStart=/opt/pi-camera/pi-camera \
   --width=480 \
   --height=320 \
   --out=/home/admin/Pictures/PiCamera \
+  --settings-file=/var/lib/pi-camera/settings.json \
   --api=true \
   --api-url=http://0.0.0.0:5000 \
   --gpio-pin=17 \
@@ -354,6 +385,23 @@ sudo systemctl restart pi-camera.service
 
 ## Controls
 
+### Web panel
+
+The web panel uses one main action button instead of separate Photo/Video/Stream buttons. Select the desired `Capture mode` in **Settings → Mode**, then press the main button:
+
+| Capture mode | Main button action |
+| ------------- | ------------------ |
+| `Photo` | Queues a photo |
+| `Video` | Starts or stops normal video recording |
+| `RandomFrame` | Starts or stops RandomFrame video recording |
+| `GlitchPhoto` | Queues one glitch photo or a glitch burst |
+| `GlitchVideo` | Starts or stops glitch video recording |
+| `Stream` | Starts or stops external streaming |
+
+The button label changes automatically, for example `Photo`, `Video`, `Stop Video`, `Stream`, or `Stop Stream`.
+
+The **Reset defaults** button in **Settings → Mode** restores the built-in defaults and saves them to the persistent settings file.
+
 ### Keyboard
 
 | Key               | Action                                                |
@@ -401,6 +449,7 @@ Buttons are read as `InputPullUp`, so the simplest wiring is a button between GP
 | `RandomFrame` | Segmented recording with random FPS per segment                |
 | `GlitchPhoto` | One photo or a burst of photos with randomized glitch settings |
 | `GlitchVideo` | Video recording with changing glitch effects                   |
+| `Stream`      | External stream using the configured stream URL and format      |
 
 ## Output files
 
@@ -431,6 +480,7 @@ Temporary `*.rawmjpeg` files and RandomFrame segment files are removed after suc
 | `--fb=`               |                      `/dev/fb0` | Framebuffer device path                                  |
 | `--touch=`            |                           empty | Touch input device path, for example `/dev/input/event0` |
 | `--out=`              | `/home/admin/Pictures/PiCamera` | Output directory for photos and videos                   |
+| `--settings-file=`    | `~/.config/pi-camera/settings.json` | JSON file used to persist UI/device settings       |
 | `--width=`            |                           `480` | Framebuffer UI width                                     |
 | `--height=`           |                           `320` | Framebuffer UI height                                    |
 | `--rotate=`           |                             `0` | Display rotation passed to the framebuffer renderer      |
@@ -452,6 +502,15 @@ Temporary `*.rawmjpeg` files and RandomFrame segment files are removed after suc
 | `--random-seconds=`   |                            `10` | RandomFrame segment length in seconds                    |
 | `--glitch-strength=`  |                             `5` | Glitch intensity, `1–10`                                 |
 | `--glitch-change-ms=` |                           `700` | GlitchVideo setting change interval in milliseconds      |
+| `--stream-url=`       |                           empty | External stream target URL                               |
+| `--stream-format=`    |                         `auto` | Stream output format: `auto`, `flv`, `mpegts`, `rtsp`    |
+| `--stream-fps=`       |                            `15` | Stream FPS                                               |
+| `--stream-bitrate=`   |                          `2500` | Stream bitrate in kbps                                   |
+| `--stream-jpeg-quality=` |                        `75` | JPEG quality used by stream input frames                 |
+| `--stream-raw=`       |                         `false` | Stream raw/normal preview instead of filtered output     |
+| `--audio=`            |                          `true` | Enable audio where supported                             |
+| `--audio-mode=`       |                          `Auto` | Audio input mode                                         |
+| `--audio-device=`     |                          empty | Optional audio device override                           |
 | `--hotspot-ssid=`     |                      `PiCamera` | Hotspot SSID                                             |
 | `--hotspot-pass=`     |                   `picamera123` | Hotspot password                                         |
 
@@ -470,13 +529,18 @@ Main endpoints include:
 * `GET /api/status`
 * `GET /api/preview.jpg`
 * `GET /api/stream.mjpg`
+* `POST /api/action`
 * `POST /api/capture`
 * `POST /api/video/toggle`
+* `POST /api/stream/toggle`
+* `POST /api/stream/start`
+* `POST /api/stream/stop`
 * `GET /api/photos`
 * `GET /api/photos/{file}`
 * `DELETE /api/photos/{file}`
 * `GET /api/settings`
 * `POST /api/settings`
+* `POST /api/settings/reset`
 * `GET /api/settings/options`
 * `GET /api/network`
 * `POST /api/network/wifi`
