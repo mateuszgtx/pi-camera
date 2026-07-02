@@ -150,6 +150,46 @@ async function toggleStream(){
   toast(msg);
 }
 
+function actionLabel(){
+  const mode=state.captureKind || 'Photo';
+  if(mode==='Video') return state.recording && !state.randomRecording && !state.glitchVideoRecording ? 'Stop Video' : 'Video';
+  if(mode==='RandomFrame') return state.recording && state.randomRecording ? 'Stop Random' : 'Random';
+  if(mode==='GlitchVideo') return state.glitchVideoRecording ? 'Stop Glitch' : 'Glitch Video';
+  if(mode==='Stream') return state.streaming ? 'Stop Stream' : 'Stream';
+  if(mode==='GlitchPhoto') return 'Glitch Photo';
+  return 'Photo';
+}
+
+function updateMainAction(){
+  const btn=$('mainAction');
+  if(btn) btn.textContent=actionLabel();
+}
+
+async function mainAction(){
+  const mode=state.captureKind || 'Photo';
+  toast(actionLabel()+'...');
+  try{
+    const r=await fetch('/api/action',{method:'POST'});
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok){toast(data.message || 'Action error');return;}
+    if(typeof data.streaming==='boolean') state.streaming=data.streaming;
+    if(typeof data.recording==='boolean') state.recording=data.recording;
+    if(typeof data.randomRecording==='boolean') state.randomRecording=data.randomRecording;
+    if(typeof data.glitchVideoRecording==='boolean') state.glitchVideoRecording=data.glitchVideoRecording;
+    sync();
+    toast(data.message || (mode+' queued'));
+    setTimeout(refreshState,900);
+  }catch(e){toast('Action error')}
+}
+
+async function refreshState(){
+  try{
+    const data=await (await fetch('/api/settings')).json();
+    state={...state,...data};
+    sync();
+  }catch{}
+}
+
 function sizeText(n){
   if(!n) return '';
   if(n>1024*1024) return (n/1024/1024).toFixed(1)+' MB';
@@ -706,6 +746,7 @@ function put(id,value){
 function sync(){
   for(const k of ['captureKind','photoSource','photoFormat','videoFormat','streamUrl','streamOutputFormat','streamFps','streamBitrateKbps','streamJpegQuality','streamUseRaw','audioEnabled','audioInputMode','audioInputFormat','audioDevice','audioSampleRate','audioBitrateKbps','sensorMode','paletteMode','photoWidth','photoHeight','jpgQuality','photoEv','videoSeconds','previewFps','randomFrameMinFps','randomFrameMaxFps','randomFrameSeconds','glitchStrength','glitchChangeMs','glitchPhotoCount','selectedColorAmount','redScale','greenScale','blueScale','lowSaveGamma','lowGrayYellowFix']) put(k,state[k]);
   const st=$('streamTargetV'); if(st) st.textContent=state.streaming?'STREAM ON':(state.streamTarget||'');
+  updateMainAction();
   const p=state.preview||{};
   for(const k of ['ev','sharpness','contrast','saturation','brightness','blackLevel','darkLevel','previewPixelSize','previewColorLevels','denoise']) put(k,p[k]);
 }
@@ -727,6 +768,7 @@ function scheduleSave(){
 function set(k,val){
   if(audioListenActive && ['audioInputMode','audioInputFormat','audioDevice'].includes(k)) stopAudioListen(true);
   state[k]=val;
+  if(k==='captureKind') updateMainAction();
   if(k==='photoSource' && val==='Preview'){
     state.preview=state.preview||{};
     if(Number(state.preview.previewPixelSize||1)>256) state.preview.previewPixelSize=256;
@@ -768,6 +810,16 @@ function setPreviewNum(k,val){
   }
   put(k,state.preview[k]);
   scheduleSave();
+}
+
+async function resetSettings(){
+  if(!confirm('Reset settings to defaults?')) return;
+  try{
+    const r=await fetch('/api/settings/reset',{method:'POST'});
+    state=await r.json();
+    sync();
+    toast(r.ok?'Defaults restored':'Reset error');
+  }catch(e){toast('Reset error')}
 }
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeLightbox();closeDrawers();}});

@@ -29,9 +29,7 @@
 
   <div class="bottom">
     <div class="actions">
-      <button class="capture" onclick="capture()">Photo</button>
-      <button onclick="toggleVideo()">Video</button>
-      <button onclick="toggleStream()">Stream</button>
+      <button id="mainAction" class="capture" onclick="mainAction()">Photo</button>
       <button onclick="openDrawer('settings')">Settings</button>
       <button onclick="openDrawer('settings');tab('wifi');loadNetwork()">WiFi</button>
       <button onclick="openDrawer('settings');tab('audio');loadAudio()">Audio</button>
@@ -84,6 +82,7 @@
         <div class="row"><div class="rowTop"><label>Sensor mode</label></div><select id="sensorMode" onchange="set('sensorMode',this.value)"></select></div>
         <div class="row"><div class="rowTop"><label>Video format</label></div><select id="videoFormat" onchange="set('videoFormat',this.value)"></select></div>
         <div class="row"><div class="rowTop"><label>Video time</label><span class="val"><span id="videoSecondsV"></span>s</span></div><input id="videoSeconds" type="range" min="0" max="300" step="1" oninput="setNum('videoSeconds',this.value)"></div>
+        <div class="row"><button class="danger" onclick="resetSettings()">Reset defaults</button></div>
       </div>
     </div>
 

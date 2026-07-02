@@ -128,6 +128,8 @@ public static partial class Program
                 });
             });
 
+            app.MapPost("/api/action", () => QueueCurrentModeRequest());
+
             app.MapPost("/api/video/toggle", () =>
             {
                 if (_isBusy)
@@ -410,6 +412,14 @@ public static partial class Program
             {
                 using var doc = await JsonDocument.ParseAsync(request.Body);
                 ApplyApiSettings(doc.RootElement, preview);
+                SavePersistentSettingsToDisk();
+                return Results.Ok(CurrentApiSettings());
+            });
+
+            app.MapPost("/api/settings/reset", () =>
+            {
+                ResetSettingsToDefaults(preview);
+                SavePersistentSettingsToDisk();
                 return Results.Ok(CurrentApiSettings());
             });
 
@@ -441,6 +451,43 @@ public static partial class Program
         {
             Console.WriteLine("[API] " + ex);
         }
+    }
+
+    private static IResult QueueCurrentModeRequest()
+    {
+        if (_captureKind == CaptureKind.Stream)
+            return QueueStreamRequest(0);
+
+        if (_isBusy)
+            return Results.Conflict(new { ok = false, message = "Camera busy" });
+
+        _captureRequested = true;
+
+        return Results.Ok(new
+        {
+            ok = true,
+            queued = true,
+            captureKind = _captureKind.ToString(),
+            recording = _previewRecording ? false : (_captureKind is CaptureKind.Video or CaptureKind.RandomFrame or CaptureKind.GlitchVideo),
+            randomRecording = _captureKind == CaptureKind.RandomFrame && !_previewRecording,
+            glitchVideoRecording = _captureKind == CaptureKind.GlitchVideo && !_previewRecording,
+            glitchPhotoCount = _captureKind == CaptureKind.GlitchPhoto ? _glitchPhotoCount : 1,
+            message = CurrentModeRequestMessage()
+        });
+    }
+
+    private static string CurrentModeRequestMessage()
+    {
+        return _captureKind switch
+        {
+            CaptureKind.Photo => "Photo queued",
+            CaptureKind.GlitchPhoto => _glitchPhotoCount > 1 ? $"Glitch x{_glitchPhotoCount} queued" : "Glitch photo queued",
+            CaptureKind.Video => _previewRecording ? "Video stop queued" : "Video start queued",
+            CaptureKind.RandomFrame => _previewRecording ? "Random video stop queued" : "Random video start queued",
+            CaptureKind.GlitchVideo => _previewRecording ? "Glitch video stop queued" : "Glitch video start queued",
+            CaptureKind.Stream => _streaming ? "Stream stop queued" : "Stream start queued",
+            _ => "Action queued"
+        };
     }
 
     private static IResult QueueStreamRequest(int action)
@@ -479,6 +526,7 @@ public static partial class Program
             return new
             {
                 captureKind = _captureKind.ToString(),
+                lookPreset = _lookPreset,
                 photoFormat = _photoFormat,
                 photoSource = _photoSource.ToString(),
                 photoWidth = _photoWidth,
@@ -487,6 +535,8 @@ public static partial class Program
                 photoEv = _photoEv,
                 videoFormat = _videoFormat,
                 videoSeconds = _videoSeconds,
+                recording = _previewRecording,
+                randomRecording = _previewRandomRecording,
                 streaming = _streaming,
                 streamUrl = _streamUrl,
                 streamOutputFormat = _streamOutputFormat,
@@ -543,7 +593,7 @@ public static partial class Program
         }
     }
 
-    private static void ApplyApiSettings(JsonElement json, CameraPreviewService preview)
+    private static void ApplyApiSettings(JsonElement json, CameraPreviewService? preview)
     {
         lock (_settingsLock)
         {
@@ -698,7 +748,7 @@ public static partial class Program
             if (!rootColorAmountProvided && TryGetInt(previewJson, "previewColorLevels", out var colorLevels)) SetPreviewColors(colorLevels);
             if (TryGetString(previewJson, "denoise", out var denoise) && !string.IsNullOrWhiteSpace(denoise)) _previewSettings.Denoise = denoise;
 
-            preview.UpdateSettings(_previewSettings);
+            preview?.UpdateSettings(_previewSettings);
         }
     }
 

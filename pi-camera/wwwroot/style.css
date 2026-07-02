@@ -98,13 +98,13 @@ button.round{width:58px;height:58px;border-radius:50%;padding:0;font-size:22px}
 }
 .actions{
   display:grid;
-  grid-template-columns:repeat(7,1fr);
+  grid-template-columns:1.6fr repeat(4,1fr);
   gap:7px;
   max-width:720px;
   margin:0 auto;
 }
 .actions button{font-size:13px;min-width:0;padding:10px 8px;border-radius:18px}
-.actions .capture{grid-column:span 1;background:#fff;color:#000;font-size:15px}
+.actions .capture{background:#fff;color:#000;font-size:15px}
 
 /* drawers */
 .drawer{

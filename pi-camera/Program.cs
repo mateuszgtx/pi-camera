@@ -205,6 +205,7 @@ private static readonly Random _randomFrameRandom = new();
     private static string _wifiPassword = "";
     private static string _hotspotSsid = "PiCamera";
     private static string _hotspotPassword = "picamera123";
+    private static string _settingsFilePath = "";
 
     private static PreviewSettings _previewSettings = new()
     {
@@ -260,6 +261,7 @@ private static readonly Random _randomFrameRandom = new();
         var apiEnabled = BoolArg(args, "--api=", true);
         var apiUrl = Arg(args, "--api-url=", "http://0.0.0.0:5000");
         _touchCaptureEnabled = BoolArg(args, "--touch-capture=", false);
+        _settingsFilePath = Arg(args, "--settings-file=", DefaultSettingsFilePath());
 
         _previewSettings.Ev = DoubleArg(args, "--ev=", _previewSettings.Ev);
         _previewSettings.Sharpness = DoubleArg(args, "--sharpness=", _previewSettings.Sharpness);
@@ -325,6 +327,8 @@ private static readonly Random _randomFrameRandom = new();
             SetPreviewColors(_selectedColorAmount);
         else
             _selectedColorAmount = ClosestColorChoice(_previewSettings.PreviewColorLevels);
+
+        LoadPersistentSettingsFromDisk();
 
         Directory.CreateDirectory(outputDir);
 

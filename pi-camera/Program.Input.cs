@@ -133,6 +133,7 @@ public static partial class Program
         {
             _paletteMode = NextPaletteMode(_paletteMode, dir);
             preview.UpdateSettings(_previewSettings);
+            SavePersistentSettingsToDisk();
             return;
         }
 
@@ -140,6 +141,7 @@ public static partial class Program
         {
             HandleModePrimaryButton(dir, display, width, height);
             preview.UpdateSettings(_previewSettings);
+            SavePersistentSettingsToDisk();
             return;
         }
 
