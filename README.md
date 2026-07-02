@@ -21,6 +21,7 @@ The application uses Raspberry Pi Camera tools (`rpicam-vid` and `rpicam-still`)
 * HTTP API endpoints for status, preview, capture action, media gallery, settings, stream, audio, Wi-Fi and hotspot controls.
 * Persistent settings saved to a JSON file and restored after restart.
 * Reset-to-defaults action from the web panel and HTTP API.
+* Optional web password protection for the HTTP API and browser panel; disabled by default.
 * Wi-Fi and hotspot management through `NetworkManager`/`nmcli`.
 * Optional battery status reading from a file, `/sys/class/power_supply`, or a custom command.
 
@@ -32,10 +33,12 @@ pi-camera-master/
 ├── pi-camera/
 │   ├── Program.cs                    # application startup, argument parsing, main loop
 │   ├── Program.Api.cs                # web panel and HTTP API endpoints
+│   ├── Program.Auth.cs               # optional web password login/session handling
 │   ├── Program.Audio.cs              # audio input and Bluetooth audio helpers
 │   ├── Program.Capture.cs            # photo capture through rpicam-still
 │   ├── Program.Display.cs            # screen UI, tabs, gallery, status messages
 │   ├── Program.Glitch.cs             # glitch effects for photos and videos
+│   ├── Program.HardwareReset.cs      # GPIO hold combo for emergency password reset
 │   ├── Program.ImageProcessing.cs    # pixelation, palettes and visual processing
 │   ├── Program.Input.cs              # keyboard, touch and GPIO input
 │   ├── Program.Network.cs            # Wi-Fi, hotspot, IP and battery status
@@ -142,7 +145,7 @@ You can choose a different path with:
 --settings-file=/var/lib/pi-camera/settings.json
 ```
 
-Use **Reset defaults** in the web panel, or call `POST /api/settings/reset`, to restore the built-in defaults and overwrite the saved JSON file.
+Use **Reset defaults** in the web panel, or call `POST /api/settings/reset`, to restore the built-in defaults and overwrite the saved JSON file. This settings reset does not create a web password; password protection remains optional.
 
 ## Example with touchscreen and GPIO buttons
 
@@ -400,7 +403,11 @@ The web panel uses one main action button instead of separate Photo/Video/Stream
 
 The button label changes automatically, for example `Photo`, `Video`, `Stop Video`, `Stream`, or `Stop Stream`.
 
-The **Reset defaults** button in **Settings → Mode** restores the built-in defaults and saves them to the persistent settings file.
+The **Reset defaults** button in **Settings → Mode** restores the built-in defaults and saves them to the persistent settings file. It does not force password protection on.
+
+Password protection is configured in **Settings → Security**. It is disabled by default. After a password is set, API calls, preview streams, gallery files and settings require login. Use **Remove password** in the same tab to turn it off.
+
+Emergency password reset from the device: hold all configured function GPIO buttons except the shutter button for 10 seconds. Function buttons are the buttons assigned with `--button-tab-pin`, `--button-mode-pin`, `--button-prev-pin`, `--button-next-pin`, `--button-gallery-pin` and `--button-video-pin`. At least two function buttons must be configured for this emergency reset loop to run.
 
 ### Keyboard
 
@@ -526,6 +533,11 @@ http://0.0.0.0:5000
 
 Main endpoints include:
 
+* `GET /api/auth/status`
+* `POST /api/auth/login`
+* `POST /api/auth/logout`
+* `POST /api/auth/password`
+* `POST /api/auth/password/clear`
 * `GET /api/status`
 * `GET /api/preview.jpg`
 * `GET /api/stream.mjpg`
@@ -550,7 +562,11 @@ Full endpoint documentation is in [`docs/API.md`](docs/API.md).
 
 ## Security notes
 
-The HTTP API does not include built-in authentication. Do not expose the camera web panel to public or untrusted networks without adding access control, firewall rules, a VPN, or a reverse proxy with authentication.
+The HTTP API has optional cookie-based password protection. It is disabled by default so existing local/offline setups keep working. Set a password in **Settings → Security** to protect API actions, preview streams, gallery files and settings. The password is stored in the persistent settings JSON as a salted PBKDF2-SHA256 hash, not as plain text.
+
+Emergency reset is available from the camera body: hold all configured function GPIO buttons except the shutter for 10 seconds to clear the web password and save that state.
+
+Do not expose the camera web panel to public or untrusted networks without additional access control, firewall rules, a VPN, or a reverse proxy with authentication.
 
 The systemd example runs the service as `root` because the application may need direct hardware access. For a production deployment, you can create a dedicated Linux user and grant it only the required permissions for framebuffer, input, camera and GPIO access.
 
@@ -558,5 +574,5 @@ The systemd example runs the service as `root` because the application may need 
 
 * The project currently targets `net10.0`.
 * `pi-camera.csproj` contains two `System.Device.Gpio` references with different versions. Keep only one version before publishing the project publicly.
-* The API has no authentication. Do not expose it to an untrusted network without adding access control.
+* Web password protection is optional and off by default. Do not expose the panel/API to an untrusted network without enabling it and adding network-level protection.
 * Consider adding a `LICENSE` file before publishing.
