@@ -112,7 +112,7 @@ public static partial class Program
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
 
-        using var p = Process.Start(psi) ?? throw new InvalidOperationException("Nie można uruchomić rpicam-still");
+        using var p = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start rpicam-still");
 
         var stdoutTask = p.StandardOutput.ReadToEndAsync();
         var stderrTask = p.StandardError.ReadToEndAsync();
@@ -134,7 +134,7 @@ public static partial class Program
 
                 TryDelete(outputPath);
 
-                using var retry = Process.Start(psi) ?? throw new InvalidOperationException("Nie można uruchomić rpicam-still retry");
+                using var retry = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start rpicam-still retry");
                 var retryOutTask = retry.StandardOutput.ReadToEndAsync();
                 var retryErrTask = retry.StandardError.ReadToEndAsync();
 
@@ -189,7 +189,7 @@ public static partial class Program
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
 
-        using var p = Process.Start(psi) ?? throw new InvalidOperationException("Nie można uruchomić rpicam-still");
+        using var p = Process.Start(psi) ?? throw new InvalidOperationException("Cannot start rpicam-still");
 
         var stdoutTask = p.StandardOutput.ReadToEndAsync();
         var stderrTask = p.StandardError.ReadToEndAsync();

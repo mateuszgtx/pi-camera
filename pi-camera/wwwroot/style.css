@@ -98,8 +98,8 @@ button.round{width:58px;height:58px;border-radius:50%;padding:0;font-size:22px}
 }
 .actions{
   display:grid;
-  grid-template-columns:repeat(5,1fr);
-  gap:8px;
+  grid-template-columns:repeat(7,1fr);
+  gap:7px;
   max-width:720px;
   margin:0 auto;
 }
@@ -142,7 +142,7 @@ button.round{width:58px;height:58px;border-radius:50%;padding:0;font-size:22px}
 .tabs{
   position:sticky;top:0;z-index:2;
   display:grid;
-  grid-template-columns:repeat(5,1fr);
+  grid-template-columns:repeat(7,1fr);
   gap:6px;
   background:rgba(10,10,10,.98);
   padding:6px 0 10px;
@@ -241,3 +241,27 @@ input[type=range]{
   .modePills button{padding:7px 10px}
 }
 @media (max-width:520px){.tabs{overflow-x:auto;justify-content:flex-start}.row{padding:12px}.bottom button{font-size:12px;padding:10px 8px}.modePills{bottom:10px}.drawer{max-height:58vh}}
+
+.bluetoothCard{margin-top:10px}
+.deviceRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #242424}
+.deviceRow:last-child{border-bottom:0}
+.deviceName{font-size:13px;font-weight:850;color:#fff;overflow:hidden;text-overflow:ellipsis}
+.deviceMeta{font-size:12px;color:#888;margin-top:2px}
+.deviceActions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.deviceActions button{min-height:34px;border-radius:12px;font-size:12px;padding:7px 9px}
+
+.buttonLine{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.buttonLine button{min-height:40px;border-radius:14px}
+
+.row.compact{min-height:auto;padding-top:8px;padding-bottom:8px}
+.scanLog{margin-top:8px}
+.sourceRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid #242424}
+.sourceRow:last-child{border-bottom:0}
+.muted{color:var(--muted)}
+button:disabled{opacity:.45;pointer-events:none;transform:none;filter:none}
+.val.powerOn{color:#d8ffd8;font-weight:900}
+.val.powerOff{color:#ffb0b0;font-weight:900}
+.mini.bad{color:#ffb0b0}
+.mini.busy{color:#fff}
+
+.audioMonitor{width:100%;min-height:42px;background:#0d0d0d;border-radius:14px}

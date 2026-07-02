@@ -30,7 +30,7 @@ public static partial class Program
 
         if (!usedPins.Add(pin))
         {
-            Console.WriteLine($"[GPIO {name}] GPIO{pin} jest już użyty, pomijam");
+            Console.WriteLine($"[GPIO {name}] GPIO{pin} is already in use, skipping");
             return;
         }
 
@@ -366,7 +366,11 @@ public static partial class Program
             return;
         }
 
-        var row = Math.Clamp((y - 64) / 34, 0, NetworkRowCount() - 1);
+        var rowsWithoutPageButton = NetworkRowCount() - 1;
+        var row = (y - 64) / 34;
+        if (row < 0 || row >= rowsWithoutPageButton)
+            return;
+
         _networkRow = row;
         HandleNetworkPrimaryButton(x < width / 2 ? -1 : 1, display, width, height);
     }

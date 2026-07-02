@@ -5,27 +5,38 @@ namespace pi_camera;
 
 public static partial class Program
 {
-    private static int NetworkPageCount() => 2;
+    private static int NetworkPageCount() => 3;
 
-    private static int NetworkRowCount() => _networkPage == 0 ? 5 : 4;
+    private static int NetworkRowCount() => _networkPage == 0 ? 6 : _networkPage == 1 ? 5 : 7;
 
     private static void HandleNetworkPrimaryButton(int dir, FramebufferDisplay display, int width, int height)
     {
         EnsureWifiConnectionsLoaded(force: false);
+        if (_networkPage == 2)
+            EnsureBluetoothDevicesLoaded(force: false);
+
+        var lastRow = NetworkRowCount() - 1;
+        if (_networkRow == lastRow)
+        {
+            _networkPage = (_networkPage + (dir >= 0 ? 1 : -1) + NetworkPageCount()) % NetworkPageCount();
+            _networkRow = 0;
+            DrawNetwork(display, width, height);
+            return;
+        }
 
         if (_networkPage == 0)
         {
             if (_networkRow == 0)
             {
                 var turnOn = !IsHotspotActive();
-                QueueNetworkAction(turnOn ? "Włączam hotspot" : "Wyłączam hotspot", async () => await SetHotspotAsync(turnOn), display, width, height);
+                QueueNetworkAction(turnOn ? "Enabling hotspot" : "Disabling hotspot", async () => await SetHotspotAsync(turnOn), display, width, height);
                 return;
             }
 
             if (_networkRow == 1)
             {
                 var turnOn = !IsWifiRadioOn();
-                QueueNetworkAction(turnOn ? "Włączam WiFi" : "Wyłączam WiFi", async () => await SetWifiRadioAsync(turnOn), display, width, height);
+                QueueNetworkAction(turnOn ? "Enabling WiFi" : "Disabling WiFi", async () => await SetWifiRadioAsync(turnOn), display, width, height);
                 return;
             }
 
@@ -43,31 +54,95 @@ public static partial class Program
                 var name = SelectedWifiName();
                 if (string.IsNullOrWhiteSpace(name))
                 {
-                    SetNetworkStatus("Brak zapisanych sieci");
+                    SetNetworkStatus("No saved networks");
                     DrawNetwork(display, width, height);
                     return;
                 }
 
-                QueueNetworkAction("Łączę: " + name, async () => await ConnectSavedWifiAsync(name), display, width, height);
+                QueueNetworkAction("Connecting: " + name, async () => await ConnectSavedWifiAsync(name), display, width, height);
                 return;
             }
 
             if (_networkRow == 4)
             {
                 EnsureWifiConnectionsLoaded(force: true);
-                SetNetworkStatus("Odświeżono sieci");
+                SetNetworkStatus("Networks refreshed");
+                DrawNetwork(display, width, height);
+                return;
+            }
+        }
+        else if (_networkPage == 1)
+        {
+            if (_networkRow == 0 || _networkRow == 1 || _networkRow == 2 || _networkRow == 3)
+            {
+                EnsureWifiConnectionsLoaded(force: true);
+                _batteryLastReadUtc = DateTime.MinValue;
+                SetNetworkStatus("Status refreshed");
                 DrawNetwork(display, width, height);
                 return;
             }
         }
         else
         {
-            if (_networkRow == 0 || _networkRow == 1 || _networkRow == 2 || _networkRow == 3)
+            if (_networkRow == 0)
             {
-                EnsureWifiConnectionsLoaded(force: true);
-                _batteryLastReadUtc = DateTime.MinValue;
-                SetNetworkStatus("Odświeżono status");
+                _audioInputMode = NextAudioInputMode(_audioInputMode, dir);
+                SetNetworkStatus("Audio: " + _audioInputMode);
                 DrawNetwork(display, width, height);
+                return;
+            }
+
+            if (_networkRow == 1)
+            {
+                if ((_audioInputMode is AudioInputMode.Auto or AudioInputMode.Bluetooth) && HasConnectedBluetoothAudioDevice() && ResolveAudioCaptureSource() is null)
+                    QueueNetworkAction("Fixing BT input", async () => await FixBluetoothInputAsync(), display, width, height);
+                else
+                {
+                    SetNetworkStatus("Audio source refreshed");
+                    DrawNetwork(display, width, height);
+                }
+                return;
+            }
+
+            if (_networkRow == 2)
+            {
+                var turnOn = !IsBluetoothRadioOn();
+                QueueNetworkAction(turnOn ? "Enabling Bluetooth" : "Disabling Bluetooth", async () => await SetBluetoothRadioAsync(turnOn), display, width, height);
+                return;
+            }
+
+            if (_networkRow == 3)
+            {
+                EnsureBluetoothDevicesLoaded(force: true);
+                if (_bluetoothDevices.Count > 0)
+                    _bluetoothDeviceIndex = (_bluetoothDeviceIndex + dir + _bluetoothDevices.Count) % _bluetoothDevices.Count;
+                DrawNetwork(display, width, height);
+                return;
+            }
+
+            if (_networkRow == 4)
+            {
+                if (IsBluetoothScanActive())
+                    QueueNetworkAction("Cancelling BT scan", async () => await CancelBluetoothScanAsync(), display, width, height);
+                else
+                    QueueNetworkAction("Starting BT scan", async () => await StartBluetoothScanAsync(120), display, width, height);
+                return;
+            }
+
+            if (_networkRow == 5)
+            {
+                var device = SelectedBluetoothDevice();
+                if (device is null)
+                {
+                    SetNetworkStatus("No Bluetooth devices");
+                    DrawNetwork(display, width, height);
+                    return;
+                }
+
+                if (device.Connected)
+                    QueueNetworkAction("Disconnecting Bluetooth", async () => await DisconnectBluetoothAsync(device.Mac), display, width, height);
+                else
+                    QueueNetworkAction("Connecting Bluetooth", async () => await PairBluetoothAsync(device.Mac), display, width, height);
                 return;
             }
         }
@@ -84,11 +159,14 @@ public static partial class Program
             {
                 await action();
                 EnsureWifiConnectionsLoaded(force: true);
-                SetNetworkStatus("OK: " + busyText);
+                var btMessage = (busyText.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase) || busyText.Contains("BT", StringComparison.OrdinalIgnoreCase))
+                    ? BluetoothActionMessage()
+                    : "";
+                SetNetworkStatus(string.IsNullOrWhiteSpace(btMessage) ? "OK: " + busyText : btMessage);
             }
             catch (Exception ex)
             {
-                SetNetworkStatus("Błąd: " + ShortError(ex.Message));
+                SetNetworkStatus("Error: " + ShortError(ex.Message));
                 Console.WriteLine("[NETWORK] " + ex);
             }
 
@@ -165,14 +243,45 @@ public static partial class Program
     {
         var name = SelectedWifiName();
         if (string.IsNullOrWhiteSpace(name))
-            return "BRAK";
+            return "NONE";
         return name.Length > 18 ? name[..18] : name;
     }
 
     private static string SelectedWifiActionLabel()
     {
         var name = SelectedWifiName();
-        return string.IsNullOrWhiteSpace(name) ? "BRAK" : "START";
+        return string.IsNullOrWhiteSpace(name) ? "NONE" : "START";
+    }
+
+    private static AudioInputMode NextAudioInputMode(AudioInputMode current, int dir)
+    {
+        var values = new[] { AudioInputMode.Auto, AudioInputMode.Aux, AudioInputMode.Bluetooth, AudioInputMode.Off };
+        var i = Array.IndexOf(values, current);
+        if (i < 0) i = 0;
+        return values[(i + dir + values.Length) % values.Length];
+    }
+
+    private static string AudioSourceLabel()
+    {
+        try
+        {
+            var source = ResolveAudioCaptureSource();
+            if (source is null)
+                return IsAudioEnabled() ? "NO INPUT" : "OFF";
+            return source.Label.Length > 18 ? source.Label[..18] : source.Label;
+        }
+        catch
+        {
+            return "?";
+        }
+    }
+
+    private static string BluetoothConnectLabel()
+    {
+        var device = SelectedBluetoothDevice();
+        if (device is null)
+            return "NONE";
+        return device.Connected ? "DISCONNECT" : device.Paired ? "CONNECT" : "PAIR";
     }
 
     private static string HotspotStatusLabel()
@@ -296,7 +405,9 @@ public static partial class Program
             ip = IpLabel(),
             saved = _savedWifiConnections.ToArray(),
             selected = SelectedWifiName(),
-            status = _networkStatus
+            status = _networkStatus,
+            audio = CurrentAudioStatus(),
+            bluetooth = CurrentBluetoothStatus()
         };
     }
 
@@ -306,7 +417,7 @@ public static partial class Program
         {
             var output = RunProcessText("nmcli", new[] { "-t", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active" }, 2000);
             var line = output.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(line)) return "BRAK";
+            if (string.IsNullOrWhiteSpace(line)) return "NONE";
             return line.Length > 22 ? line[..22] : line;
         }
         catch { return "?"; }
@@ -317,7 +428,7 @@ public static partial class Program
         try
         {
             var output = RunProcessText("hostname", new[] { "-I" }, 1500).Trim();
-            if (string.IsNullOrWhiteSpace(output)) return "BRAK";
+            if (string.IsNullOrWhiteSpace(output)) return "NONE";
             return output.Length > 24 ? output[..24] : output;
         }
         catch { return "?"; }

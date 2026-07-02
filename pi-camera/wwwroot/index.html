@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pl">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
@@ -10,11 +10,11 @@
 <div id="app">
   <div id="previewWrap">
     <div id="viewFiltered" class="view hidden">
-      <img id="previewFiltered" alt="Podgląd z filtrem">
-      <div class="badge">Filtr</div>
+      <img id="previewFiltered" alt="Filtered preview">
+      <div class="badge">Filter</div>
     </div>
     <div id="viewRaw" class="view">
-      <img id="previewRaw" alt="Podgląd normalny">
+      <img id="previewRaw" alt="Normal preview">
       <div class="badge">Normal</div>
     </div>
 
@@ -22,18 +22,20 @@
 
     <div class="modePills">
       <button id="modeRaw" class="on" onclick="previewMode('raw')">Normal</button>
-      <button id="modeFiltered" onclick="previewMode('filtered')">Filtr</button>
-      <button id="modeBoth" onclick="previewMode('both')">Oba</button>
+      <button id="modeFiltered" onclick="previewMode('filtered')">Filter</button>
+      <button id="modeBoth" onclick="previewMode('both')">Both</button>
     </div>
   </div>
 
   <div class="bottom">
     <div class="actions">
-      <button class="capture" onclick="capture()">Zdjęcie</button>
-      <button onclick="toggleVideo()">Wideo</button>
-      <button onclick="openDrawer('settings')">Ustaw.</button>
+      <button class="capture" onclick="capture()">Photo</button>
+      <button onclick="toggleVideo()">Video</button>
+      <button onclick="toggleStream()">Stream</button>
+      <button onclick="openDrawer('settings')">Settings</button>
       <button onclick="openDrawer('settings');tab('wifi');loadNetwork()">WiFi</button>
-      <button class="galleryBtn" onclick="openDrawer('photos');loadPhotos()">Galeria</button>
+      <button onclick="openDrawer('settings');tab('audio');loadAudio()">Audio</button>
+      <button class="galleryBtn" onclick="openDrawer('photos');loadPhotos()">Gallery</button>
     </div>
   </div>
 </div>
@@ -41,89 +43,161 @@
 <div id="photos" class="drawer">
   <div class="handle"></div>
   <div class="drawerHead">
-    <div class="drawerTitle">Galeria</div>
-    <button class="closeBtn" onclick="closeDrawers()">Zamknij</button>
+    <div class="drawerTitle">Gallery</div>
+    <button class="closeBtn" onclick="closeDrawers()">Close</button>
   </div>
   <div class="drawerBody">
     <div class="galleryTools">
-      <button class="ghost" onclick="loadPhotos()">Odśwież</button>
-      <button class="ghost" onclick="openCurrent()">Otwórz panel</button>
+      <button class="ghost" onclick="loadPhotos()">Refresh</button>
+      <button class="ghost" onclick="openCurrent()">Open panel</button>
     </div>
     <div id="photosList"></div>
   </div>
 </div>
 
 <div id="lightbox" class="lightbox" onclick="closeLightbox()">
-  <button class="closeBtn" onclick="closeLightbox();event.stopPropagation()">Zamknij</button>
-  <img id="lightboxImg" alt="Powiększone zdjęcie">
+  <button class="closeBtn" onclick="closeLightbox();event.stopPropagation()">Close</button>
+  <img id="lightboxImg" alt="Enlarged photo">
 </div>
 
 <div id="settings" class="drawer">
   <div class="handle"></div>
   <div class="drawerHead">
-    <div class="drawerTitle">Ustawienia</div>
-    <button class="closeBtn" onclick="closeDrawers()">Zamknij</button>
+    <div class="drawerTitle">Settings</div>
+    <button class="closeBtn" onclick="closeDrawers()">Close</button>
   </div>
   <div class="drawerBody">
     <div class="tabs">
-      <button id="tab-basic" class="on" onclick="tab('basic')">Tryb</button>
-      <button id="tab-photo" onclick="tab('photo')">Foto</button>
-      <button id="tab-look" onclick="tab('look')">Kolor</button>
+      <button id="tab-basic" class="on" onclick="tab('basic')">Mode</button>
+      <button id="tab-stream" onclick="tab('stream')">Stream</button>
+      <button id="tab-photo" onclick="tab('photo')">Photo</button>
+      <button id="tab-look" onclick="tab('look')">Color</button>
       <button id="tab-advanced" onclick="tab('advanced')">Live</button>
       <button id="tab-wifi" onclick="tab('wifi');loadNetwork()">WiFi</button>
+      <button id="tab-audio" onclick="tab('audio');loadAudio()">Audio</button>
     </div>
 
     <div id="basic" class="section on">
       <div class="card grid">
-        <div class="row"><div class="rowTop"><label>Tryb zapisu</label></div><select id="captureKind" onchange="set('captureKind',this.value)"></select></div>
-        <div class="row"><div class="rowTop"><label>Źródło zdjęcia</label></div><select id="photoSource" onchange="set('photoSource',this.value)"></select></div>
-        <div class="row"><div class="rowTop"><label>Tryb sensora</label></div><select id="sensorMode" onchange="set('sensorMode',this.value)"></select></div>
-        <div class="row"><div class="rowTop"><label>Format wideo</label></div><select id="videoFormat" onchange="set('videoFormat',this.value)"></select></div>
-        <div class="row"><div class="rowTop"><label>Czas wideo</label><span class="val"><span id="videoSecondsV"></span>s</span></div><input id="videoSeconds" type="range" min="0" max="300" step="1" oninput="setNum('videoSeconds',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Capture mode</label></div><select id="captureKind" onchange="set('captureKind',this.value)"></select></div>
+        <div class="row"><div class="rowTop"><label>Photo source</label></div><select id="photoSource" onchange="set('photoSource',this.value)"></select></div>
+        <div class="row"><div class="rowTop"><label>Sensor mode</label></div><select id="sensorMode" onchange="set('sensorMode',this.value)"></select></div>
+        <div class="row"><div class="rowTop"><label>Video format</label></div><select id="videoFormat" onchange="set('videoFormat',this.value)"></select></div>
+        <div class="row"><div class="rowTop"><label>Video time</label><span class="val"><span id="videoSecondsV"></span>s</span></div><input id="videoSeconds" type="range" min="0" max="300" step="1" oninput="setNum('videoSeconds',this.value)"></div>
+      </div>
+    </div>
+
+    <div id="stream" class="section">
+      <div class="card grid">
+        <div class="row">
+          <div class="rowTop"><label>Stream URL</label><span class="val" id="streamTargetV"></span></div>
+          <input id="streamUrl" type="text" autocomplete="off" placeholder="rtmp://... / srt://... / rtsp://..." onchange="set('streamUrl',this.value)">
+        </div>
+        <div class="row"><div class="rowTop"><label>Output format</label></div><select id="streamOutputFormat" onchange="set('streamOutputFormat',this.value)"></select></div>
+        <div class="row"><div class="rowTop"><label>Stream FPS</label><span class="val" id="streamFpsV"></span></div><input id="streamFps" type="range" min="1" max="30" step="1" oninput="setNum('streamFps',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Bitrate kbps</label><span class="val" id="streamBitrateKbpsV"></span></div><input id="streamBitrateKbps" type="range" min="256" max="20000" step="64" oninput="setNum('streamBitrateKbps',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>JPEG quality</label><span class="val" id="streamJpegQualityV"></span></div><input id="streamJpegQuality" type="range" min="35" max="95" step="1" oninput="setNum('streamJpegQuality',this.value)"></div>
+        <div class="row">
+          <div class="rowTop"><label>Stream image</label></div>
+          <select id="streamUseRaw" onchange="setBool('streamUseRaw',this.value)">
+            <option value="false">Filter / current look</option>
+            <option value="true">Normal / RAW</option>
+          </select>
+        </div>
       </div>
     </div>
 
     <div id="photo" class="section">
       <div class="card grid">
-        <div class="row"><div class="rowTop"><label>Format zdjęcia</label></div><select id="photoFormat" onchange="set('photoFormat',this.value)"></select></div>
-        <div class="row"><div class="rowTop"><label>Szerokość</label><span class="val" id="photoWidthV"></span></div><input id="photoWidth" type="range" min="320" max="4056" step="16" oninput="setNum('photoWidth',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Wysokość</label><span class="val" id="photoHeightV"></span></div><input id="photoHeight" type="range" min="240" max="3040" step="16" oninput="setNum('photoHeight',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Jakość JPG</label><span class="val" id="jpgQualityV"></span></div><input id="jpgQuality" type="range" min="70" max="100" step="1" oninput="setNum('jpgQuality',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>EV zdjęcia</label><span class="val" id="photoEvV"></span></div><input id="photoEv" type="range" min="-8" max="8" step="0.1" oninput="setNum('photoEv',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Photo format</label></div><select id="photoFormat" onchange="set('photoFormat',this.value)"></select></div>
+        <div class="row"><div class="rowTop"><label>Width</label><span class="val" id="photoWidthV"></span></div><input id="photoWidth" type="range" min="320" max="4056" step="16" oninput="setNum('photoWidth',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Height</label><span class="val" id="photoHeightV"></span></div><input id="photoHeight" type="range" min="240" max="3040" step="16" oninput="setNum('photoHeight',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>JPG quality</label><span class="val" id="jpgQualityV"></span></div><input id="jpgQuality" type="range" min="70" max="100" step="1" oninput="setNum('jpgQuality',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Photo EV</label><span class="val" id="photoEvV"></span></div><input id="photoEv" type="range" min="-8" max="8" step="0.1" oninput="setNum('photoEv',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Random min FPS</label><span class="val" id="randomFrameMinFpsV"></span></div><input id="randomFrameMinFps" type="range" min="1" max="30" step="1" oninput="setNum('randomFrameMinFps',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Random max FPS</label><span class="val" id="randomFrameMaxFpsV"></span></div><input id="randomFrameMaxFps" type="range" min="1" max="30" step="1" oninput="setNum('randomFrameMaxFps',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Random segment sekundy</label><span class="val" id="randomFrameSecondsV"></span></div><input id="randomFrameSeconds" type="range" min="1" max="15" step="1" oninput="setNum('randomFrameSeconds',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Glitch siła</label><span class="val" id="glitchStrengthV"></span></div><input id="glitchStrength" type="range" min="1" max="10" step="1" oninput="setNum('glitchStrength',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Glitch zmiana ms</label><span class="val" id="glitchChangeMsV"></span></div><input id="glitchChangeMs" type="range" min="100" max="5000" step="100" oninput="setNum('glitchChangeMs',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Glitch zdjęć</label></div><select id="glitchPhotoCount" onchange="setNum('glitchPhotoCount',this.value)"></select><div class="mini">Przy GLITCH FOTO zrobi kilka losowych wersji jednego ujęcia.</div></div>
+        <div class="row"><div class="rowTop"><label>Random segment seconds</label><span class="val" id="randomFrameSecondsV"></span></div><input id="randomFrameSeconds" type="range" min="1" max="15" step="1" oninput="setNum('randomFrameSeconds',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Glitch strength</label><span class="val" id="glitchStrengthV"></span></div><input id="glitchStrength" type="range" min="1" max="10" step="1" oninput="setNum('glitchStrength',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Glitch change ms</label><span class="val" id="glitchChangeMsV"></span></div><input id="glitchChangeMs" type="range" min="100" max="5000" step="100" oninput="setNum('glitchChangeMs',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Glitch photo count</label></div><select id="glitchPhotoCount" onchange="setNum('glitchPhotoCount',this.value)"></select></div>
       </div>
     </div>
 
     <div id="look" class="section">
       <div class="card grid">
-        <div class="row"><div class="rowTop"><label>Paleta</label></div><select id="paletteMode" onchange="set('paletteMode',this.value)"></select></div>
-        <div class="row"><div class="rowTop"><label>Ilość kolorów</label><span class="val" id="selectedColorAmountV"></span></div><input id="selectedColorAmount" type="range" min="2" max="256" step="1" oninput="setNum('selectedColorAmount',this.value)"><div class="mini">Najlepiej używać wartości: 2, 4, 8, 16, 32, 64, 128, 256.</div></div>
-        <div class="row"><div class="rowTop"><label>PIKSELE / JAKOŚĆ</label><span class="val" id="previewPixelSizeV2"></span></div><input id="pixelSizeLook" type="range" min="1" max="2048" step="1" oninput="setPreviewNum('previewPixelSize',this.value)"><div class="mini">1 = mocny pixel-art, 2048 = najlepsza jakość. Podgląd pokazuje przeskalowany wgląd.</div></div>
+        <div class="row"><div class="rowTop"><label>Palette</label></div><select id="paletteMode" onchange="set('paletteMode',this.value)"></select></div>
+        <div class="row"><div class="rowTop"><label>Color count</label><span class="val" id="selectedColorAmountV"></span></div><input id="selectedColorAmount" type="range" min="2" max="256" step="1" oninput="setNum('selectedColorAmount',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Pixel / quality</label><span class="val" id="previewPixelSizeV2"></span></div><input id="pixelSizeLook" type="range" min="1" max="2048" step="1" oninput="setPreviewNum('previewPixelSize',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Red scale</label><span class="val" id="redScaleV"></span></div><input id="redScale" type="range" min="0" max="2" step="0.01" oninput="setNum('redScale',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Green scale</label><span class="val" id="greenScaleV"></span></div><input id="greenScale" type="range" min="0" max="2" step="0.01" oninput="setNum('greenScale',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Blue scale</label><span class="val" id="blueScaleV"></span></div><input id="blueScale" type="range" min="0" max="2" step="0.01" oninput="setNum('blueScale',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Gamma zapisu</label><span class="val" id="lowSaveGammaV"></span></div><input id="lowSaveGamma" type="range" min="0.35" max="2.5" step="0.01" oninput="setNum('lowSaveGamma',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Save gamma</label><span class="val" id="lowSaveGammaV"></span></div><input id="lowSaveGamma" type="range" min="0.35" max="2.5" step="0.01" oninput="setNum('lowSaveGamma',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Yellow fix</label><span class="val" id="lowGrayYellowFixV"></span></div><input id="lowGrayYellowFix" type="range" min="0" max="80" step="1" oninput="setNum('lowGrayYellowFix',this.value)"></div>
       </div>
     </div>
 
     <div id="advanced" class="section">
       <div class="card grid">
-        <div class="row"><div class="rowTop"><label>EV podglądu</label><span class="val" id="evV"></span></div><input id="ev" type="range" min="-8" max="8" step="0.1" oninput="setPreviewNum('ev',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Kontrast</label><span class="val" id="contrastV"></span></div><input id="contrast" type="range" min="0" max="32" step="0.05" oninput="setPreviewNum('contrast',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Saturacja</label><span class="val" id="saturationV"></span></div><input id="saturation" type="range" min="0" max="32" step="0.05" oninput="setPreviewNum('saturation',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Jasność</label><span class="val" id="brightnessV"></span></div><input id="brightness" type="range" min="-1" max="1" step="0.01" oninput="setPreviewNum('brightness',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Ostrość</label><span class="val" id="sharpnessV"></span></div><input id="sharpness" type="range" min="0" max="16" step="0.05" oninput="setPreviewNum('sharpness',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Preview EV</label><span class="val" id="evV"></span></div><input id="ev" type="range" min="-8" max="8" step="0.1" oninput="setPreviewNum('ev',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Contrast</label><span class="val" id="contrastV"></span></div><input id="contrast" type="range" min="0" max="32" step="0.05" oninput="setPreviewNum('contrast',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Saturation</label><span class="val" id="saturationV"></span></div><input id="saturation" type="range" min="0" max="32" step="0.05" oninput="setPreviewNum('saturation',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Brightness</label><span class="val" id="brightnessV"></span></div><input id="brightness" type="range" min="-1" max="1" step="0.01" oninput="setPreviewNum('brightness',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Sharpness</label><span class="val" id="sharpnessV"></span></div><input id="sharpness" type="range" min="0" max="16" step="0.05" oninput="setPreviewNum('sharpness',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Black level</label><span class="val" id="blackLevelV"></span></div><input id="blackLevel" type="range" min="0" max="240" step="1" oninput="setPreviewNum('blackLevel',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Dark level</label><span class="val" id="darkLevelV"></span></div><input id="darkLevel" type="range" min="0.25" max="2" step="0.01" oninput="setPreviewNum('darkLevel',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>PIKSELE / JAKOŚĆ</label><span class="val" id="previewPixelSizeV"></span></div><input id="previewPixelSize" type="range" min="1" max="2048" step="1" oninput="setPreviewNum('previewPixelSize',this.value)"><div class="mini">1 = duże bloki, 2048 = najlepsza jakość. Podgląd jest skalowany proporcjonalnie.</div></div>
+        <div class="row"><div class="rowTop"><label>Pixel / quality</label><span class="val" id="previewPixelSizeV"></span></div><input id="previewPixelSize" type="range" min="1" max="2048" step="1" oninput="setPreviewNum('previewPixelSize',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Preview colors</label><span class="val" id="previewColorLevelsV"></span></div><input id="previewColorLevels" type="range" min="2" max="256" step="1" oninput="setPreviewNum('previewColorLevels',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Denoise</label></div><select id="denoise" onchange="setPreview('denoise',this.value)"></select></div>
+      </div>
+    </div>
+
+
+
+    <div id="audio" class="section">
+      <div class="card grid">
+        <div class="row">
+          <div class="rowTop"><label>Status</label><span class="val" id="audioStatusV">--</span></div>
+          <div class="buttonLine">
+            <button class="ghost" onclick="loadAudio()">Refresh audio</button>
+          </div>
+          <div id="audioHelp" class="mini muted"></div>
+        </div>
+        <div class="row">
+          <div class="rowTop"><label>Listen</label><span class="val" id="audioListenV">Off</span></div>
+          <button id="audioListenBtn" class="primary" onclick="toggleAudioListen()">Listen</button>
+          <audio id="audioMonitor" class="audioMonitor hidden" controls preload="none"></audio>
+          <div id="audioListenHelp" class="mini muted">Low-latency browser monitor.</div>
+        </div>
+        <div class="row"><div class="rowTop"><label>Audio enabled</label></div><select id="audioEnabled" onchange="setBool('audioEnabled',this.value)"><option value="true">On</option><option value="false">Off</option></select></div>
+        <div class="row"><div class="rowTop"><label>Audio source</label></div><select id="audioInputMode" onchange="set('audioInputMode',this.value);loadAudio()"></select></div>
+        <div class="row"><div class="rowTop"><label>Input format</label></div><select id="audioInputFormat" onchange="set('audioInputFormat',this.value)"></select></div>
+        <div class="row">
+          <div class="rowTop"><label>Manual device</label></div>
+          <input id="audioDevice" type="text" autocomplete="off" placeholder="plughw:1,0 or Pulse source name" onchange="set('audioDevice',this.value)">
+        </div>
+        <div class="row"><div class="rowTop"><label>Sample rate</label><span class="val" id="audioSampleRateV"></span></div><input id="audioSampleRate" type="range" min="8000" max="96000" step="1000" oninput="setNum('audioSampleRate',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Audio bitrate kbps</label><span class="val" id="audioBitrateKbpsV"></span></div><input id="audioBitrateKbps" type="range" min="32" max="512" step="8" oninput="setNum('audioBitrateKbps',this.value)"></div>
+        <div class="row">
+          <div class="rowTop"><label>Detected inputs</label></div>
+          <div id="audioSources" class="mini">Loading...</div>
+        </div>
+      </div>
+
+      <div class="card grid bluetoothCard">
+        <div class="row">
+          <div class="rowTop"><label>Bluetooth power</label><span class="val" id="bluetoothPowerV">--</span></div>
+          <div class="buttonLine">
+            <button id="bluetoothOnBtn" class="primary" onclick="setBluetoothPower(true)">On</button>
+            <button id="bluetoothOffBtn" class="ghost" onclick="setBluetoothPower(false)">Off</button>
+          </div>
+          <div id="bluetoothActionV" class="mini muted"></div>
+        </div>
+        <div class="row">
+          <div class="rowTop"><label>Bluetooth devices</label><span class="val" id="bluetoothStatusV">--</span></div>
+          <button id="bluetoothScanBtn" class="primary" onclick="toggleBluetoothScan()">Scan</button>
+        </div>
+        <div class="row compact"><div class="rowTop"><label>Show unnamed</label></div><select id="showUnnamedBluetooth" onchange="loadAudio()"><option value="false">Off</option><option value="true">On</option></select></div>
+        <div id="bluetoothList" class="mini">Loading...</div>
       </div>
     </div>
 
@@ -131,19 +205,18 @@
       <div class="card grid">
         <div class="row">
           <div class="rowTop"><label>Status</label><span class="val" id="networkStatusV">--</span></div>
-          <button class="ghost" onclick="loadNetwork()">Odśwież status</button>
+          <button class="ghost" onclick="loadNetwork()">Refresh status</button>
         </div>
         <div class="row">
-          <div class="rowTop"><label>Dodaj WiFi przez API</label></div>
-          <input id="wifiSsid" type="text" autocomplete="off" placeholder="Nazwa sieci / SSID">
-          <input id="wifiPassword" type="text" autocomplete="off" placeholder="Hasło WiFi">
-          <button class="primary" onclick="saveWifiNetwork(true)">Zapisz i połącz</button>
-          <button class="ghost" onclick="saveWifiNetwork(false)">Tylko zapisz</button>
-          <div class="mini">Najwygodniej wpisać tutaj SSID i hasło z telefonu/komputera. Kamera zapisze połączenie w NetworkManager/nmcli.</div>
+          <div class="rowTop"><label>Add WiFi</label></div>
+          <input id="wifiSsid" type="text" autocomplete="off" placeholder="Network name / SSID">
+          <input id="wifiPassword" type="text" autocomplete="off" placeholder="WiFi password">
+          <button class="primary" onclick="saveWifiNetwork(true)">Save and connect</button>
+          <button class="ghost" onclick="saveWifiNetwork(false)">Save only</button>
         </div>
         <div class="row">
-          <div class="rowTop"><label>Zapisane sieci</label></div>
-          <div id="savedWifiList" class="mini">Ładuję...</div>
+          <div class="rowTop"><label>Saved networks</label></div>
+          <div id="savedWifiList" class="mini">Loading...</div>
         </div>
       </div>
     </div>

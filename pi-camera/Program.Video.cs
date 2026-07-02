@@ -106,6 +106,8 @@ public static partial class Program
             }
         }
 
+        StartAudioRecordingForVideo(basePath);
+
         Console.WriteLine(random
             ? $"[REC] random segmented MJPEG: {basePath}_segXXX -> {finalPath}"
             : $"[REC] preview source MJPEG: {basePath}.rawmjpeg -> {finalPath}");
@@ -148,15 +150,15 @@ public static partial class Program
 
         if (result.wasRandom && result.randomSegments.Count > 0 && result.finalPath is not null)
         {
-            DrawSaved(display, width, height, "KLEJENIE RANDOM");
-            QueueRandomSegmentsConversion(result.randomSegments, result.finalPath, result.finalFormat);
+            DrawSaved(display, width, height, "MERGING RANDOM");
+            QueueRandomSegmentsConversion(result.randomSegments, result.finalPath, result.finalFormat, result.audioPath);
             return;
         }
 
         if (result.sourcePath is not null && result.finalPath is not null)
         {
-            DrawSaved(display, width, height, result.finalFormat == "mp4" ? "KONWERSJA MP4" : "KONWERSJA AVI");
-            QueueVideoConversion(result.sourcePath, result.finalPath, result.finalFormat, _previewFps);
+            DrawSaved(display, width, height, result.finalFormat == "mp4" ? "CONVERTING MP4" : "CONVERTING AVI");
+            QueueVideoConversion(result.sourcePath, result.finalPath, result.finalFormat, _previewFps, result.audioPath);
         }
         else
         {
@@ -164,13 +166,14 @@ public static partial class Program
         }
     }
 
-    private static (string? sourcePath, string? finalPath, string finalFormat, string? displayName, List<RandomSegmentInfo> randomSegments, bool wasRandom) ClosePreviewRecordingCore()
+    private static (string? sourcePath, string? finalPath, string finalFormat, string? displayName, List<RandomSegmentInfo> randomSegments, bool wasRandom, string? audioPath) ClosePreviewRecordingCore()
     {
         string? sourcePath;
         string? finalPath;
         string finalFormat;
         bool wasRandom;
         List<RandomSegmentInfo> randomSegments;
+        string? audioPath;
 
         var waitUntil = DateTime.UtcNow.AddMilliseconds(1500);
         while (Interlocked.CompareExchange(ref _recordEncodeBusy, 0, 0) != 0 && DateTime.UtcNow < waitUntil)
@@ -210,9 +213,11 @@ public static partial class Program
         if (dropped > 0)
             Console.WriteLine($"[REC] dropped frames while encoding: {dropped}");
 
+        audioPath = StopAudioRecordingForVideo();
+
         var displayName = finalPath is null ? null : Path.GetFileName(finalPath);
 
-        return (sourcePath, finalPath, finalFormat, displayName, randomSegments, wasRandom);
+        return (sourcePath, finalPath, finalFormat, displayName, randomSegments, wasRandom, audioPath);
     }
 
     private static string NormalizeVideoFormat(string format)
@@ -220,7 +225,7 @@ public static partial class Program
         return string.Equals(format, "mp4", StringComparison.OrdinalIgnoreCase) ? "mp4" : "mjpeg";
     }
 
-    private static void QueueVideoConversion(string sourcePath, string finalPath, string finalFormat, int framerate)
+    private static void QueueVideoConversion(string sourcePath, string finalPath, string finalFormat, int framerate, string? audioPath)
     {
         _ = Task.Run(async () =>
         {
@@ -228,11 +233,12 @@ public static partial class Program
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(finalPath) ?? ".");
-                var ok = await ConvertRawMjpegAsync(sourcePath, finalPath, finalFormat, framerate);
+                var ok = await ConvertRawMjpegAsync(sourcePath, finalPath, finalFormat, framerate, audioPath);
                 if (ok)
                 {
                     Console.WriteLine($"[REC] video ready: {finalPath}");
                     TryDelete(sourcePath);
+                    if (audioPath is not null) TryDelete(audioPath);
                 }
                 else
                 {
@@ -250,7 +256,7 @@ public static partial class Program
         });
     }
 
-    private static void QueueRandomSegmentsConversion(List<RandomSegmentInfo> segments, string finalPath, string finalFormat)
+    private static void QueueRandomSegmentsConversion(List<RandomSegmentInfo> segments, string finalPath, string finalFormat, string? audioPath)
     {
         _ = Task.Run(async () =>
         {
@@ -273,7 +279,7 @@ public static partial class Program
                         continue;
                     }
 
-                    var ok = await ConvertRawMjpegAsync(segment.SourcePath, segment.VideoPath, finalFormat, segment.Fps);
+                    var ok = await ConvertRawMjpegAsync(segment.SourcePath, segment.VideoPath, finalFormat, segment.Fps, audioPath: null);
                     if (!ok)
                     {
                         Console.WriteLine($"[REC] random segment conversion failed: {Path.GetFileName(segment.SourcePath)}");
@@ -293,8 +299,25 @@ public static partial class Program
                 var listPath = Path.ChangeExtension(finalPath, ".concat.txt");
                 await File.WriteAllLinesAsync(listPath, converted.Select(p => $"file '{EscapeConcatPath(p)}'"));
 
-                var concatOk = await ConcatVideosAsync(listPath, finalPath);
-                if (concatOk && File.Exists(finalPath))
+                var concatTarget = audioPath is null ? finalPath : Path.Combine(Path.GetDirectoryName(finalPath) ?? ".", Path.GetFileNameWithoutExtension(finalPath) + ".noaudio" + Path.GetExtension(finalPath));
+                var concatOk = await ConcatVideosAsync(listPath, concatTarget);
+                var finalOk = concatOk && File.Exists(concatTarget);
+
+                if (finalOk && audioPath is not null)
+                {
+                    finalOk = await MuxAudioIntoVideoAsync(concatTarget, audioPath, finalPath, finalFormat);
+                    if (finalOk)
+                    {
+                        TryDelete(concatTarget);
+                        TryDelete(audioPath);
+                    }
+                    else
+                    {
+                        try { File.Copy(concatTarget, finalPath, overwrite: true); } catch { }
+                    }
+                }
+
+                if (finalOk && File.Exists(finalPath))
                 {
                     Console.WriteLine($"[REC] random final ready: {finalPath}");
 
@@ -362,21 +385,84 @@ public static partial class Program
         return File.Exists(finalPath);
     }
 
-    private static async Task<bool> ConvertRawMjpegAsync(string sourcePath, string finalPath, string finalFormat, int framerate)
+    private static async Task<bool> ConvertRawMjpegAsync(string sourcePath, string finalPath, string finalFormat, int framerate, string? audioPath)
     {
         framerate = Math.Clamp(framerate, 1, 60);
 
-        var args = finalFormat == "mp4"
-            ? $"-y -f mjpeg -framerate {framerate} -i \"{sourcePath}\" -c:v libx264 -pix_fmt yuv420p -movflags +faststart \"{finalPath}\""
-            : $"-y -f mjpeg -framerate {framerate} -i \"{sourcePath}\" -c:v mjpeg -q:v 3 \"{finalPath}\"";
-
-        var psi = new ProcessStartInfo("ffmpeg", args)
+        var args = new List<string>
         {
+            "-y",
+            "-f", "mjpeg",
+            "-framerate", framerate.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "-i", sourcePath
+        };
+
+        var hasAudio = audioPath is not null && File.Exists(audioPath) && new FileInfo(audioPath).Length > 4096;
+        if (hasAudio)
+        {
+            args.Add("-i");
+            args.Add(audioPath!);
+            args.AddRange(new[] { "-map", "0:v:0", "-map", "1:a:0?" });
+        }
+
+        if (finalFormat == "mp4")
+        {
+            args.AddRange(new[] { "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart" });
+            if (hasAudio) args.AddRange(BuildAudioCodecArgs());
+        }
+        else
+        {
+            args.AddRange(new[] { "-c:v", "mjpeg", "-q:v", "3" });
+            if (hasAudio) args.AddRange(new[] { "-c:a", "pcm_s16le" });
+        }
+
+        if (hasAudio)
+            args.Add("-shortest");
+
+        args.Add(finalPath);
+
+        return await RunFfmpegAsync(args, "[FFMPEG]", finalPath);
+    }
+
+    private static async Task<bool> MuxAudioIntoVideoAsync(string videoPath, string audioPath, string finalPath, string finalFormat)
+    {
+        if (!File.Exists(videoPath) || !File.Exists(audioPath))
+            return false;
+
+        var args = new List<string>
+        {
+            "-y",
+            "-i", videoPath,
+            "-i", audioPath,
+            "-map", "0:v:0",
+            "-map", "1:a:0?",
+            "-c:v", "copy"
+        };
+
+        if (finalFormat == "mp4")
+            args.AddRange(BuildAudioCodecArgs());
+        else
+            args.AddRange(new[] { "-c:a", "pcm_s16le" });
+
+        args.Add("-shortest");
+        args.Add(finalPath);
+
+        return await RunFfmpegAsync(args, "[FFMPEG MUX]", finalPath);
+    }
+
+    private static async Task<bool> RunFfmpegAsync(List<string> args, string logPrefix, string expectedPath)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
             RedirectStandardError = true,
             RedirectStandardOutput = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
+
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
 
         using var process = new Process { StartInfo = psi };
         process.Start();
@@ -392,13 +478,13 @@ public static partial class Program
         if (process.ExitCode != 0)
         {
             if (!string.IsNullOrWhiteSpace(stderr))
-                Console.WriteLine("[FFMPEG] " + stderr.Trim());
+                Console.WriteLine(logPrefix + " " + stderr.Trim());
             else if (!string.IsNullOrWhiteSpace(stdout))
-                Console.WriteLine("[FFMPEG] " + stdout.Trim());
+                Console.WriteLine(logPrefix + " " + stdout.Trim());
             return false;
         }
 
-        return File.Exists(finalPath);
+        return File.Exists(expectedPath);
     }
 
     private static void WritePreviewRecordingFrameIfNeeded(byte[] rgb, int width, int height)

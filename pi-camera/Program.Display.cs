@@ -20,19 +20,19 @@ public static partial class Program
     {
         display.Clear(0x0000);
         display.FillRect(0, 0, width, 38, 0x1082);
-        display.DrawText($"TRYB {_modePage + 1}/{ModePageCount()}", 8, 10, 0xFFFF);
-        display.DrawText("MODE=OPCJA  PREV/NEXT=ZMIEN", 148, 10, 0xC618);
+        display.DrawText($"MODE {_modePage + 1}/{ModePageCount()}", 8, 10, 0xFFFF);
+        display.DrawText("MODE=OPTION  PREV/NEXT=CHANGE", 148, 10, 0xC618);
 
         if (_modePage == 0)
         {
-            display.DrawTextScaled("KOLORY", 8, 42, 0xFFFF, 2);
-            DrawSettingRow(display, 74, width, "KOLORY", _selectedColorAmount.ToString(), IsActiveModeRow(0));
-            DrawSettingRow(display, 108, width, "PALETA", PaletteModeLabel(_paletteMode), IsActiveModeRow(1));
-            DrawSettingRow(display, 142, width, "PIX/JAK", _previewSettings.PreviewPixelSize + "/" + MaxPixelSizeForCurrentSource(), IsActiveModeRow(2));
+            display.DrawTextScaled("COLORS", 8, 42, 0xFFFF, 2);
+            DrawSettingRow(display, 74, width, "COLORS", _selectedColorAmount.ToString(), IsActiveModeRow(0));
+            DrawSettingRow(display, 108, width, "PALETTE", PaletteModeLabel(_paletteMode), IsActiveModeRow(1));
+            DrawSettingRow(display, 142, width, "PIX/QUAL", _previewSettings.PreviewPixelSize + "/" + MaxPixelSizeForCurrentSource(), IsActiveModeRow(2));
         }
         else if (_modePage == 1)
         {
-            display.DrawTextScaled("SKALA RGB", 8, 42, 0xFFFF, 2);
+            display.DrawTextScaled("RGB SCALE", 8, 42, 0xFFFF, 2);
             DrawSettingRow(display, 82, width, "RED", _redScale.ToString("0.0"), IsActiveModeRow(0));
             DrawSettingRow(display, 116, width, "GREEN", _greenScale.ToString("0.0"), IsActiveModeRow(1));
             DrawSettingRow(display, 150, width, "BLUE", _blueScale.ToString("0.0"), IsActiveModeRow(2));
@@ -40,7 +40,7 @@ public static partial class Program
         }
         else if (_modePage == 2)
         {
-            display.DrawTextScaled("FOTO", 8, 42, 0xFFFF, 2);
+            display.DrawTextScaled("PHOTO", 8, 42, 0xFFFF, 2);
             DrawSettingRow(display, 82, width, "SOURCE", PhotoSourceLabel(), IsActiveModeRow(0));
             DrawSettingRow(display, 116, width, "FORMAT", _photoFormat.ToUpperInvariant(), IsActiveModeRow(1));
             DrawSettingRow(display, 150, width, "WIDTH", _photoWidth.ToString(), IsActiveModeRow(2));
@@ -49,26 +49,26 @@ public static partial class Program
         else if (_modePage == 3)
         {
             display.DrawTextScaled("VIDEO/SENSOR", 8, 42, 0xFFFF, 2);
-            DrawSettingRow(display, 82, width, "TRYB", CaptureKindLabel(_captureKind), IsActiveModeRow(0));
+            DrawSettingRow(display, 82, width, "MODE", CaptureKindLabel(_captureKind), IsActiveModeRow(0));
             DrawSettingRow(display, 116, width, "VIDEO", VideoFormatLabel(), IsActiveModeRow(1));
             DrawSettingRow(display, 150, width, "SENSOR", SensorLabel(_sensorMode), IsActiveModeRow(2));
-            DrawSettingRow(display, 184, width, "FOTO EV", _photoEv.ToString("0.0"), IsActiveModeRow(3));
+            DrawSettingRow(display, 184, width, "PHOTO EV", _photoEv.ToString("0.0"), IsActiveModeRow(3));
         }
         else if (_modePage == 4)
         {
             display.DrawTextScaled("RANDOM", 8, 42, 0xFFFF, 2);
             DrawSettingRow(display, 74, width, "MIN FPS", _randomFrameMinFps.ToString(), IsActiveModeRow(0));
             DrawSettingRow(display, 108, width, "MAX FPS", _randomFrameMaxFps.ToString(), IsActiveModeRow(1));
-            DrawSettingRow(display, 142, width, "SEG SEK", _randomFrameSeconds.ToString(), IsActiveModeRow(2));
+            DrawSettingRow(display, 142, width, "SEG SEC", _randomFrameSeconds.ToString(), IsActiveModeRow(2));
             DrawSettingRow(display, 176, width, "VIDEO", VideoFormatLabel(), IsActiveModeRow(3));
             DrawSettingRow(display, 210, width, "SENSOR", SensorLabel(_sensorMode), IsActiveModeRow(4));
         }
         else if (_modePage == 5)
         {
             display.DrawTextScaled("GLITCH", 8, 42, 0xFFFF, 2);
-            DrawSettingRow(display, 74, width, "SILA", _glitchStrength.ToString(), IsActiveModeRow(0));
-            DrawSettingRow(display, 108, width, "ZMIANA", _glitchChangeMs + "ms", IsActiveModeRow(1));
-            DrawSettingRow(display, 142, width, "PALETA", OnOff(_glitchPaletteEnabled), IsActiveModeRow(2));
+            DrawSettingRow(display, 74, width, "STRENGTH", _glitchStrength.ToString(), IsActiveModeRow(0));
+            DrawSettingRow(display, 108, width, "CHANGE", _glitchChangeMs + "ms", IsActiveModeRow(1));
+            DrawSettingRow(display, 142, width, "PALETTE", OnOff(_glitchPaletteEnabled), IsActiveModeRow(2));
             DrawSettingRow(display, 176, width, "PIX", OnOff(_glitchPixelsEnabled), IsActiveModeRow(3));
             DrawSettingRow(display, 210, width, "RGB", OnOff(_glitchRgbEnabled), IsActiveModeRow(4));
         }
@@ -103,14 +103,14 @@ public static partial class Program
         var y = height - 44 - 38;
         var active = _modeRow == ModeRowCount(_modePage) - 1;
         display.FillRect(8, y, width - 16, 34, active ? 0xFFFF : 0x2104);
-        var label = _modePage == 0 ? "DALEJ: SKALA RGB" :
-                    _modePage == 1 ? "DALEJ: FOTO" :
-                    _modePage == 2 ? "DALEJ: VIDEO/SENSOR" :
-                    _modePage == 3 ? "DALEJ: RANDOM" :
-                    _modePage == 4 ? "DALEJ: GLITCH" :
-                    _modePage == 5 ? "DALEJ: LIVE 1/2" :
-                    _modePage == 6 ? "DALEJ: LIVE 2/2" :
-                    "WROC: KOLORY";
+        var label = _modePage == 0 ? "NEXT: RGB SCALE" :
+                    _modePage == 1 ? "NEXT: PHOTO" :
+                    _modePage == 2 ? "NEXT: VIDEO/SENSOR" :
+                    _modePage == 3 ? "NEXT: RANDOM" :
+                    _modePage == 4 ? "NEXT: GLITCH" :
+                    _modePage == 5 ? "NEXT: LIVE 1/2" :
+                    _modePage == 6 ? "NEXT: LIVE 2/2" :
+                    "BACK: COLORS";
         display.DrawCenteredText(label, y + 12, active ? 0x0000 : 0xFFFF);
     }
 
@@ -152,7 +152,7 @@ public static partial class Program
 
         if (_galleryFiles.Count == 0)
         {
-            display.DrawCenteredTextScaled("BRAK ZDJEC", height / 2 - 20, 0xFFFF, 2);
+            display.DrawCenteredTextScaled("NO FILES", height / 2 - 20, 0xFFFF, 2);
             DrawTabs(display, width, height);
             display.Flush();
             return;
@@ -164,7 +164,7 @@ public static partial class Program
         if (file.EndsWith(".dng", StringComparison.OrdinalIgnoreCase))
         {
             display.DrawCenteredTextScaled("RAW/DNG", 100, 0xFFE0, 2);
-            display.DrawCenteredText("PODGLAD RAW NIEOBSUGIWANY", 135, 0xFFFF);
+            display.DrawCenteredText("RAW PREVIEW NOT SUPPORTED", 135, 0xFFFF);
         }
         else
         {
@@ -175,7 +175,7 @@ public static partial class Program
             }
             catch (Exception ex)
             {
-                display.DrawCenteredTextScaled("BLAD PLIKU", 90, 0xF800, 2);
+                display.DrawCenteredTextScaled("FILE ERROR", 90, 0xF800, 2);
                 display.DrawWrappedText(ex.Message, 8, 130, 0xFFFF);
             }
         }
@@ -191,25 +191,36 @@ public static partial class Program
         EnsureWifiConnectionsLoaded(force: false);
         display.Clear(0x0000);
         display.FillRect(0, 0, width, 38, 0x1082);
-        display.DrawText($"SIEC {_networkPage + 1}/{NetworkPageCount()}", 8, 10, 0xFFFF);
-        display.DrawText("MODE=OPCJA  +/-=AKCJA", 150, 10, 0xC618);
+        display.DrawText($"NETWORK {_networkPage + 1}/{NetworkPageCount()}", 8, 10, 0xFFFF);
+        display.DrawText("MODE=OPTION  +/-=ACTION", 150, 10, 0xC618);
 
         if (_networkPage == 0)
         {
             display.DrawTextScaled("WIFI / HOTSPOT", 8, 44, 0xFFFF, 2);
             DrawSettingRow(display, 82, width, "HOTSPOT", HotspotStatusLabel(), _networkRow == 0);
             DrawSettingRow(display, 116, width, "WIFI", WifiRadioStatusLabel(), _networkRow == 1);
-            DrawSettingRow(display, 150, width, "ZAPISANA", SelectedWifiLabel(), _networkRow == 2);
-            DrawSettingRow(display, 184, width, "POLACZ", SelectedWifiActionLabel(), _networkRow == 3);
-            DrawSettingRow(display, 218, width, "ODSWIEZ", "NMCLI", _networkRow == 4);
+            DrawSettingRow(display, 150, width, "SAVED", SelectedWifiLabel(), _networkRow == 2);
+            DrawSettingRow(display, 184, width, "CONNECT", SelectedWifiActionLabel(), _networkRow == 3);
+            DrawSettingRow(display, 218, width, "REFRESH", "NMCLI", _networkRow == 4);
         }
-        else
+        else if (_networkPage == 1)
         {
             display.DrawTextScaled("STATUS", 8, 44, 0xFFFF, 2);
             DrawSettingRow(display, 82, width, "ACTIVE", ActiveNetworkLabel(), _networkRow == 0);
             DrawSettingRow(display, 116, width, "IP", IpLabel(), _networkRow == 1);
-            DrawSettingRow(display, 150, width, "BATERIA", BatteryStatusText(), _networkRow == 2);
-            DrawSettingRow(display, 184, width, "ODSWIEZ", "STATUS", _networkRow == 3);
+            DrawSettingRow(display, 150, width, "BATTERY", BatteryStatusText(), _networkRow == 2);
+            DrawSettingRow(display, 184, width, "REFRESH", "STATUS", _networkRow == 3);
+        }
+        else
+        {
+            EnsureBluetoothDevicesLoaded(force: false);
+            display.DrawTextScaled("AUDIO / BT", 8, 44, 0xFFFF, 2);
+            DrawSettingRow(display, 68, width, "AUDIO", _audioInputMode.ToString().ToUpperInvariant(), _networkRow == 0);
+            DrawSettingRow(display, 98, width, "SOURCE", AudioSourceLabel(), _networkRow == 1);
+            DrawSettingRow(display, 128, width, "BT POWER", BluetoothRadioStatusLabel(), _networkRow == 2);
+            DrawSettingRow(display, 158, width, "BT DEVICE", SelectedBluetoothLabel(), _networkRow == 3);
+            DrawSettingRow(display, 188, width, "BT SCAN", BluetoothScanLabel(), _networkRow == 4);
+            DrawSettingRow(display, 218, width, "BT CONNECT", BluetoothConnectLabel(), _networkRow == 5);
         }
 
         if (!string.IsNullOrWhiteSpace(_networkStatus) && DateTime.UtcNow < _networkStatusUntilUtc)
@@ -219,8 +230,10 @@ public static partial class Program
         }
 
         var y = height - 44 - 38;
-        display.FillRect(8, y, width - 16, 34, 0x2104);
-        display.DrawCenteredText(_networkPage == 0 ? "DALEJ: STATUS" : "WROC: WIFI/HOTSPOT", y + 12, 0xFFFF);
+        var pageButtonActive = _networkRow == NetworkRowCount() - 1;
+        display.FillRect(8, y, width - 16, 34, pageButtonActive ? 0xFFFF : 0x2104);
+        var pageLabel = _networkPage == 0 ? "NEXT: STATUS" : _networkPage == 1 ? "NEXT: AUDIO/BT" : "BACK: WIFI/HOTSPOT";
+        display.DrawCenteredText(pageLabel, y + 12, pageButtonActive ? 0x0000 : 0xFFFF);
         DrawTabs(display, width, height);
         display.Flush();
     }
@@ -242,8 +255,19 @@ public static partial class Program
         display.DrawText(string.IsNullOrWhiteSpace(battery) ? "BAT --" : battery, 4, 10, 0x07E0);
         display.DrawText(CaptureKindLabel(_captureKind), 74, 10, 0xFFFF);
         display.DrawText(PaletteModeLabel(_paletteMode), 134, 10, 0xFFE0);
+        var statusX = 220;
         if (_previewRecording)
-            display.DrawText(_previewRandomRecording ? "RND" : "REC", 220, 10, 0xF800);
+        {
+            display.DrawText(_previewRandomRecording ? "RND" : "REC", statusX, 10, 0xF800);
+            statusX += 38;
+        }
+        if (_streaming)
+        {
+            display.DrawText("STR", statusX, 10, 0x07E0);
+            statusX += 38;
+        }
+        if (IsAudioEnabled())
+            display.DrawText("MIC", statusX, 10, 0xFFE0);
         display.DrawText(DateTime.Now.ToString("HH:mm"), width - 38, 10, 0xFFFF);
     }
 
@@ -251,10 +275,10 @@ public static partial class Program
     {
         var y = height - 44;
         var w = width / 4;
-        DrawTab(display, 0, y, w, 44, "POD", _tab == Tab.Preview);
-        DrawTab(display, w, y, w, 44, "TRYB", _tab == Tab.Mode);
-        DrawTab(display, w * 2, y, w, 44, "GAL", _tab == Tab.Gallery);
-        DrawTab(display, w * 3, y, width - w * 3, 44, "SIEC", _tab == Tab.Network);
+        DrawTab(display, 0, y, w, 44, "LIVE", _tab == Tab.Preview);
+        DrawTab(display, w, y, w, 44, "MODE", _tab == Tab.Mode);
+        DrawTab(display, w * 2, y, w, 44, "MEDIA", _tab == Tab.Gallery);
+        DrawTab(display, w * 3, y, width - w * 3, 44, "NET", _tab == Tab.Network);
     }
 
     private static void DrawTab(FramebufferDisplay display, int x, int y, int w, int h, string text, bool active)
@@ -288,7 +312,7 @@ public static partial class Program
     private static void DrawError(FramebufferDisplay display, int width, int height, string error)
     {
         display.Clear(0x0000);
-        display.DrawCenteredTextScaled("BLAD", 35, 0xF800, 2);
+        display.DrawCenteredTextScaled("ERROR", 35, 0xF800, 2);
         display.DrawWrappedText(error, 8, 80, 0xFFFF);
         DrawTabs(display, width, height);
         display.Flush();

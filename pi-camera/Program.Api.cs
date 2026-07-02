@@ -39,6 +39,15 @@ public static partial class Program
                 busy = _isBusy,
                 recording = _previewRecording,
                 randomRecording = _previewRandomRecording,
+                streaming = _streaming,
+                streamTarget = MaskStreamUrl(_streamUrl),
+                streamUptimeSeconds = _streaming ? (int)(DateTime.UtcNow - _streamStartedUtc).TotalSeconds : 0,
+                audio = new
+                {
+                    enabled = IsAudioEnabled(),
+                    inputMode = _audioInputMode.ToString(),
+                    active = ResolveAudioCaptureSource()?.Label
+                },
                 previewReady = _lastPreviewRgb is not null,
                 tab = _tab.ToString(),
                 captureKind = _captureKind.ToString(),
@@ -104,6 +113,9 @@ public static partial class Program
                 if (_captureKind == CaptureKind.Video || _captureKind == CaptureKind.RandomFrame || _captureKind == CaptureKind.GlitchVideo)
                     return Results.BadRequest(new { ok = false, message = "Current mode is video. Use video toggle." });
 
+                if (_captureKind == CaptureKind.Stream)
+                    return Results.BadRequest(new { ok = false, message = "Current mode is stream. Use stream toggle/start/stop." });
+
                 _captureRequested = true;
                 return Results.Ok(new
                 {
@@ -125,6 +137,10 @@ public static partial class Program
                 _captureRequested = true;
                 return Results.Ok(new { ok = true, recording = !_previewRecording });
             });
+
+            app.MapPost("/api/stream/toggle", () => QueueStreamRequest(0));
+            app.MapPost("/api/stream/start", () => QueueStreamRequest(1));
+            app.MapPost("/api/stream/stop", () => QueueStreamRequest(2));
 
             app.MapGet("/api/network", () => Results.Ok(CurrentNetworkStatus()));
 
@@ -161,7 +177,7 @@ public static partial class Program
                         return Results.BadRequest(new { ok = false, message = "Empty network name" });
 
                     await ConnectSavedWifiAsync(name);
-                    SetNetworkStatus("Połączono: " + name);
+                    SetNetworkStatus("Connected: " + name);
                     return Results.Ok(new { ok = true, network = CurrentNetworkStatus() });
                 }
                 catch (Exception ex)
@@ -213,6 +229,181 @@ public static partial class Program
                 return Results.Ok(new { ok = true });
             });
 
+            app.MapGet("/api/audio", () => Results.Ok(CurrentAudioStatus()));
+            app.MapGet("/api/audio/listen.wav", async (HttpContext context) => await StreamAudioListenAsync(context));
+            app.MapGet("/api/audio/listen.raw", async (HttpContext context) => await StreamAudioListenRawAsync(context));
+
+            app.MapPost("/api/audio/bluetooth/power", async (HttpRequest request) =>
+            {
+                try
+                {
+                    var on = true;
+                    if (request.ContentLength is > 0)
+                    {
+                        using var doc = await JsonDocument.ParseAsync(request.Body);
+                        if (TryGetBool(doc.RootElement, "enabled", out var enabled)) on = enabled;
+                        else if (TryGetBool(doc.RootElement, "on", out var onValue)) on = onValue;
+                        else if (TryGetBool(doc.RootElement, "powered", out var powered)) on = powered;
+                        else if (TryGetString(doc.RootElement, "state", out var state)) on = !state.Equals("off", StringComparison.OrdinalIgnoreCase);
+                    }
+
+                    await SetBluetoothRadioAsync(on);
+                    SetNetworkStatus("Bluetooth " + (on ? "ON" : "OFF"));
+                    return Results.Ok(CurrentAudioStatus());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API BT POWER] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), audio = CurrentAudioStatus() });
+                }
+            });
+
+            app.MapPost("/api/audio/bluetooth/on", async () =>
+            {
+                try
+                {
+                    await SetBluetoothRadioAsync(true);
+                    SetNetworkStatus("Bluetooth ON");
+                    return Results.Ok(CurrentAudioStatus());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API BT ON] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), audio = CurrentAudioStatus() });
+                }
+            });
+
+            app.MapPost("/api/audio/bluetooth/off", async () =>
+            {
+                try
+                {
+                    await SetBluetoothRadioAsync(false);
+                    SetNetworkStatus("Bluetooth OFF");
+                    return Results.Ok(CurrentAudioStatus());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API BT OFF] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), audio = CurrentAudioStatus() });
+                }
+            });
+
+            app.MapPost("/api/audio/bluetooth/scan", async (HttpRequest request) =>
+            {
+                try
+                {
+                    var seconds = 120;
+                    if (request.ContentLength is > 0)
+                    {
+                        using var doc = await JsonDocument.ParseAsync(request.Body);
+                        if (TryGetInt(doc.RootElement, "seconds", out var requestedSeconds))
+                            seconds = requestedSeconds;
+                    }
+
+                    await ScanBluetoothAsync(seconds);
+                    return Results.Ok(CurrentAudioStatus());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API BT SCAN] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), audio = CurrentAudioStatus() });
+                }
+            });
+
+            app.MapPost("/api/audio/bluetooth/cancel", async () =>
+            {
+                try
+                {
+                    await CancelBluetoothScanAsync();
+                    SetNetworkStatus("Bluetooth scan cancelled");
+                    return Results.Ok(CurrentAudioStatus());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API BT CANCEL] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), audio = CurrentAudioStatus() });
+                }
+            });
+
+            app.MapPost("/api/audio/bluetooth/scan/cancel", async () =>
+            {
+                try
+                {
+                    await CancelBluetoothScanAsync();
+                    SetNetworkStatus("Bluetooth scan cancelled");
+                    return Results.Ok(CurrentAudioStatus());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API BT SCAN CANCEL] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), audio = CurrentAudioStatus() });
+                }
+            });
+
+            app.MapPost("/api/audio/bluetooth/pair", async (HttpRequest request) =>
+            {
+                try
+                {
+                    using var doc = await JsonDocument.ParseAsync(request.Body);
+                    var mac = ReadBluetoothRequestMac(doc.RootElement);
+                    await PairBluetoothAsync(mac);
+                    return Results.Ok(CurrentAudioStatus());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API BT PAIR] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), audio = CurrentAudioStatus() });
+                }
+            });
+
+            app.MapPost("/api/audio/bluetooth/connect", async (HttpRequest request) =>
+            {
+                try
+                {
+                    using var doc = await JsonDocument.ParseAsync(request.Body);
+                    var mac = ReadBluetoothRequestMac(doc.RootElement);
+                    await ConnectBluetoothAsync(mac);
+                    return Results.Ok(CurrentAudioStatus());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API BT CONNECT] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), audio = CurrentAudioStatus() });
+                }
+            });
+
+            app.MapPost("/api/audio/bluetooth/disconnect", async (HttpRequest request) =>
+            {
+                try
+                {
+                    using var doc = await JsonDocument.ParseAsync(request.Body);
+                    var mac = ReadBluetoothRequestMac(doc.RootElement);
+                    await DisconnectBluetoothAsync(mac);
+                    return Results.Ok(CurrentAudioStatus());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API BT DISCONNECT] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), audio = CurrentAudioStatus() });
+                }
+            });
+
+            app.MapPost("/api/audio/bluetooth/remove", async (HttpRequest request) =>
+            {
+                try
+                {
+                    using var doc = await JsonDocument.ParseAsync(request.Body);
+                    var mac = ReadBluetoothRequestMac(doc.RootElement);
+                    await RemoveBluetoothAsync(mac);
+                    return Results.Ok(CurrentAudioStatus());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[API BT REMOVE] " + ex);
+                    return Results.BadRequest(new { ok = false, message = ShortError(ex.Message), audio = CurrentAudioStatus() });
+                }
+            });
+
             app.MapGet("/api/settings", () => Results.Ok(CurrentApiSettings()));
 
             app.MapPost("/api/settings", async (HttpRequest request) =>
@@ -224,10 +415,13 @@ public static partial class Program
 
             app.MapGet("/api/settings/options", () => Results.Ok(new
             {
-                captureKinds = new[] { "Photo", "Video", "RandomFrame", "GlitchPhoto", "GlitchVideo" },
+                captureKinds = new[] { "Photo", "Video", "RandomFrame", "GlitchPhoto", "GlitchVideo", "Stream" },
                 photoSources = new[] { "FullHq", "Preview" },
                 photoFormats = new[] { "jpg", "png", "bmp", "raw", "rawjpg" },
                 videoFormats = new[] { "mjpeg", "mp4" },
+                streamOutputFormats = new[] { "auto", "flv", "mpegts", "rtsp" },
+                audioInputModes = Enum.GetNames<AudioInputMode>(),
+                audioInputFormats = new[] { "auto", "alsa", "pulse" },
                 sensorModes = new[] { "full", "bin", "fast" },
                 paletteModes = Enum.GetNames<PaletteMode>(),
                 denoise = new[] { "cdn_off", "cdn_fast", "cdn_hq" },
@@ -237,7 +431,7 @@ public static partial class Program
                 glitchPhotoCountChoices = new[] { 1, 2, 3, 4, 5, 6, 8, 10, 12 },
                 livePreviewPixelMax = _livePreviewPixelMax,
                 previewPixelMaxForCurrentPhotoSource = MaxPixelSizeForCurrentSource(),
-                pixelMeaning = "1 = mocny pixel-art / duże bloki, max = najlepsza jakość / najmniejsze bloki"
+                pixelMeaning = "1 = strong pixel-art / large blocks, max = best quality / smallest blocks"
             }));
 
             Console.WriteLine($"[API] listening on {apiUrl}");
@@ -247,6 +441,35 @@ public static partial class Program
         {
             Console.WriteLine("[API] " + ex);
         }
+    }
+
+    private static IResult QueueStreamRequest(int action)
+    {
+        if (_isBusy)
+            return Results.Conflict(new { ok = false, message = "Camera busy" });
+
+        if (action == 1 && _streaming)
+            return Results.Ok(new { ok = true, streaming = true, queued = false, message = "Stream already running" });
+
+        if (action == 2 && !_streaming)
+            return Results.Ok(new { ok = true, streaming = false, queued = false, message = "Stream already stopped" });
+
+        var wantsStart = action == 1 || (action == 0 && !_streaming);
+        if (wantsStart && string.IsNullOrWhiteSpace(_streamUrl))
+            return Results.BadRequest(new { ok = false, message = "streamUrl is missing. Set it in /api/settings." });
+
+        Interlocked.Exchange(ref _streamRequestedAction, action);
+        _captureKind = CaptureKind.Stream;
+        _captureRequested = true;
+
+        return Results.Ok(new
+        {
+            ok = true,
+            queued = true,
+            requested = action == 1 ? "start" : action == 2 ? "stop" : "toggle",
+            streaming = action == 0 ? !_streaming : action == 1,
+            streamTarget = MaskStreamUrl(_streamUrl)
+        });
     }
 
     private static object CurrentApiSettings()
@@ -264,6 +487,22 @@ public static partial class Program
                 photoEv = _photoEv,
                 videoFormat = _videoFormat,
                 videoSeconds = _videoSeconds,
+                streaming = _streaming,
+                streamUrl = _streamUrl,
+                streamOutputFormat = _streamOutputFormat,
+                streamFps = _streamFps,
+                streamBitrateKbps = _streamBitrateKbps,
+                streamJpegQuality = _streamJpegQuality,
+                streamUseRaw = _streamUseRaw,
+                streamTarget = MaskStreamUrl(_streamUrl),
+                streamUptimeSeconds = _streaming ? (int)(DateTime.UtcNow - _streamStartedUtc).TotalSeconds : 0,
+                audioEnabled = _audioEnabled,
+                audioInputMode = _audioInputMode.ToString(),
+                audioInputFormat = _audioInputFormat,
+                audioDevice = _audioDevice,
+                audioSampleRate = _audioSampleRate,
+                audioBitrateKbps = _audioBitrateKbps,
+                audioActive = ResolveAudioCaptureSource()?.Label,
                 previewFps = _previewFps,
                 randomFrameMinFps = _randomFrameMinFps,
                 randomFrameMaxFps = _randomFrameMaxFps,
@@ -341,6 +580,42 @@ public static partial class Program
 
             if (TryGetInt(json, "videoSeconds", out var videoSeconds))
                 _videoSeconds = Math.Clamp(videoSeconds, 0, 3600);
+
+            if (TryGetString(json, "streamUrl", out var streamUrl))
+                _streamUrl = streamUrl.Trim();
+
+            if (TryGetString(json, "streamOutputFormat", out var streamOutputFormat) || TryGetString(json, "streamFormat", out streamOutputFormat))
+                _streamOutputFormat = NormalizeStreamOutputFormat(streamOutputFormat);
+
+            if (TryGetInt(json, "streamFps", out var streamFps))
+                _streamFps = Math.Clamp(streamFps, 1, 30);
+
+            if (TryGetInt(json, "streamBitrateKbps", out var streamBitrateKbps) || TryGetInt(json, "streamBitrate", out streamBitrateKbps))
+                _streamBitrateKbps = Math.Clamp(streamBitrateKbps, 256, 20000);
+
+            if (TryGetInt(json, "streamJpegQuality", out var streamJpegQuality))
+                _streamJpegQuality = Math.Clamp(streamJpegQuality, 35, 95);
+
+            if (TryGetBool(json, "streamUseRaw", out var streamUseRaw) || TryGetBool(json, "streamRaw", out streamUseRaw))
+                _streamUseRaw = streamUseRaw;
+
+            if (TryGetBool(json, "audioEnabled", out var audioEnabled) || TryGetBool(json, "audio", out audioEnabled))
+                _audioEnabled = audioEnabled;
+
+            if (TryGetString(json, "audioInputMode", out var audioInputMode) || TryGetString(json, "audioMode", out audioInputMode))
+                _audioInputMode = ParseAudioInputMode(audioInputMode);
+
+            if (TryGetString(json, "audioInputFormat", out var audioInputFormat) || TryGetString(json, "audioFormat", out audioInputFormat))
+                _audioInputFormat = NormalizeAudioInputFormat(audioInputFormat);
+
+            if (TryGetString(json, "audioDevice", out var audioDevice))
+                _audioDevice = audioDevice.Trim();
+
+            if (TryGetInt(json, "audioSampleRate", out var audioSampleRate))
+                _audioSampleRate = Math.Clamp(audioSampleRate, 8000, 96000);
+
+            if (TryGetInt(json, "audioBitrateKbps", out var audioBitrateKbps) || TryGetInt(json, "audioBitrate", out audioBitrateKbps))
+                _audioBitrateKbps = Math.Clamp(audioBitrateKbps, 32, 512);
 
             if (TryGetInt(json, "previewFps", out var previewFps))
                 _previewFps = Math.Clamp(previewFps, 1, 30);

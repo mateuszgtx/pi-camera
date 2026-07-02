@@ -29,13 +29,23 @@ public static partial class Program
         Video,
         RandomFrame,
         GlitchPhoto,
-        GlitchVideo
+        GlitchVideo,
+        Stream
     }
 
     private enum PhotoSource
     {
         FullHq,
         Preview
+    }
+
+    private enum AudioInputMode
+    {
+        Auto,
+        Off,
+        Aux,
+        Bluetooth,
+        Manual
     }
 
     private enum PaletteMode
@@ -134,10 +144,53 @@ private static readonly Random _randomFrameRandom = new();
     private static string _previewRecordFinalFormat = "mjpeg";
     private static int _backgroundVideoConversions;
 
+    private static readonly object _streamLock = new();
+    private static Process? _streamProcess;
+    private static Stream? _streamInput;
+    private static bool _streaming;
+    private static DateTime _streamStartedUtc;
+    private static DateTime _streamLastFrameWrittenUtc;
+    private static int _streamEncodeBusy;
+    private static int _streamFramesDropped;
+    private static int _streamRequestedAction; // 0 = toggle, 1 = start, 2 = stop
+    private static string _streamUrl = "";
+    private static string _streamOutputFormat = "auto";
+    private static int _streamFps = 15;
+    private static int _streamBitrateKbps = 2500;
+    private static int _streamJpegQuality = 75;
+    private static bool _streamUseRaw;
+
+    private static readonly object _audioLock = new();
+    private static bool _audioEnabled = true;
+    private static AudioInputMode _audioInputMode = AudioInputMode.Auto;
+    private static string _audioInputFormat = "auto";
+    private static string _audioDevice = "";
+    private static int _audioSampleRate = 48000;
+    private static int _audioBitrateKbps = 128;
+    private static Process? _audioRecordProcess;
+    private static string? _audioRecordPath;
+    private static string? _audioRecordDeviceLabel;
+    private static DateTime _lastBluetoothInputProfileAttemptUtc = DateTime.MinValue;
+    private static string _lastAudioInputMessage = "";
+    private static DateTime _lastAudioInputMessageUtc = DateTime.MinValue;
+
     private static int _networkPage;
     private static int _networkRow;
     private static int _wifiConnectionIndex;
     private static List<string> _savedWifiConnections = new();
+    private static int _bluetoothDeviceIndex;
+    private static List<BluetoothDeviceInfo> _bluetoothDevices = new();
+    private static List<BluetoothDeviceInfo> _bluetoothAllDevices = new();
+    private static readonly Dictionary<string, string> _bluetoothScanNames = new(StringComparer.OrdinalIgnoreCase);
+    private static DateTime _lastBluetoothRefreshUtc = DateTime.MinValue;
+    private static DateTime _lastBluetoothScanUtc = DateTime.MinValue;
+    private static string _bluetoothLastScanLog = "";
+    private static readonly object _bluetoothActionLock = new();
+    private static bool _bluetoothActionBusy;
+    private static string _bluetoothAction = "";
+    private static string _bluetoothActionMessage = "";
+    private static bool _bluetoothActionOk = true;
+    private static DateTime _bluetoothActionUtc = DateTime.MinValue;
     private static string _networkStatus = "";
     private static DateTime _networkStatusUntilUtc = DateTime.MinValue;
     private static DateTime _lastNetworkRefreshUtc = DateTime.MinValue;
@@ -241,6 +294,18 @@ private static readonly Random _randomFrameRandom = new();
         _glitchPixelsEnabled = BoolArg(args, "--glitch-pixels=", _glitchPixelsEnabled);
         _glitchRgbEnabled = BoolArg(args, "--glitch-rgb=", _glitchRgbEnabled);
         _glitchPhotoCount = Math.Clamp(IntArg(args, "--glitch-photo-count=", _glitchPhotoCount), 1, 12);
+        _streamUrl = Arg(args, "--stream-url=", _streamUrl);
+        _streamOutputFormat = NormalizeStreamOutputFormat(Arg(args, "--stream-format=", _streamOutputFormat));
+        _streamFps = Math.Clamp(IntArg(args, "--stream-fps=", _streamFps), 1, 30);
+        _streamBitrateKbps = Math.Clamp(IntArg(args, "--stream-bitrate=", _streamBitrateKbps), 256, 20000);
+        _streamJpegQuality = Math.Clamp(IntArg(args, "--stream-jpeg-quality=", _streamJpegQuality), 35, 95);
+        _streamUseRaw = BoolArg(args, "--stream-raw=", _streamUseRaw);
+        _audioEnabled = BoolArg(args, "--audio=", _audioEnabled);
+        _audioInputMode = ParseAudioInputMode(Arg(args, "--audio-mode=", _audioInputMode.ToString()));
+        _audioInputFormat = NormalizeAudioInputFormat(Arg(args, "--audio-format=", _audioInputFormat));
+        _audioDevice = Arg(args, "--audio-device=", _audioDevice);
+        _audioSampleRate = Math.Clamp(IntArg(args, "--audio-sample-rate=", _audioSampleRate), 8000, 96000);
+        _audioBitrateKbps = Math.Clamp(IntArg(args, "--audio-bitrate=", _audioBitrateKbps), 32, 512);
         if (_randomFrameMaxFps < _randomFrameMinFps)
             _randomFrameMaxFps = _randomFrameMinFps;
 
@@ -272,7 +337,7 @@ private static readonly Random _randomFrameRandom = new();
         if (gpioPin >= 0)
             usedGpioPins.Add(gpioPin);
 
-        Console.WriteLine("Cegła clean modes");
+        Console.WriteLine("Pi Camera clean modes");
         Console.WriteLine($"Framebuffer: {framebufferPath}");
         Console.WriteLine($"Touch: {(string.IsNullOrWhiteSpace(inputPath) ? "off" : inputPath)} invertX={invertX} invertY={invertY} touchCapture={_touchCaptureEnabled}");
         Console.WriteLine($"GPIO shutter: {(gpioPin >= 0 ? $"GPIO{gpioPin}" : "off")}");
@@ -383,6 +448,7 @@ private static readonly Random _randomFrameRandom = new();
                 }
 
                 WritePreviewRecordingFrameIfNeeded(frame.Rgb, frame.Width, frame.Height);
+                WriteStreamFrameIfNeeded(frame.Rgb, frame.Width, frame.Height);
             }
             catch (Exception ex)
             {
@@ -391,8 +457,8 @@ private static readonly Random _randomFrameRandom = new();
         };
 
         display.Clear(0x0000);
-        display.DrawCenteredTextScaled("CEGŁA", height / 2 - 34, 0xFFFF, 2);
-        display.DrawCenteredText("URUCHAMIAM KAMERE...", height / 2 - 2, 0x07E0);
+        display.DrawCenteredTextScaled("PI CAM", height / 2 - 34, 0xFFFF, 2);
+        display.DrawCenteredText("STARTING CAMERA...", height / 2 - 2, 0x07E0);
         display.Flush();
 
         StartPreviewSafe(preview);
@@ -405,8 +471,8 @@ private static readonly Random _randomFrameRandom = new();
                 if (wait > 4)
                 {
                     display.Clear(0x0000);
-                    display.DrawCenteredTextScaled("KAMERA STARTUJE", height / 2 - 34, 0xFFE0, 2);
-                    display.DrawCenteredText($"CZEKAM {wait:0}s", height / 2 - 2, 0xFFFF);
+                    display.DrawCenteredTextScaled("CAMERA STARTING", height / 2 - 34, 0xFFE0, 2);
+                    display.DrawCenteredText($"WAIT {wait:0}s", height / 2 - 2, 0xFFFF);
                     display.Flush();
                     await Task.Delay(500);
                 }
@@ -428,6 +494,11 @@ private static readonly Random _randomFrameRandom = new();
                 {
                     await ToggleGlitchVideoAsync(outputDir, display, width, height);
                 }
+                else if (_captureKind == CaptureKind.Stream)
+                {
+                    var streamAction = Interlocked.Exchange(ref _streamRequestedAction, 0);
+                    await ToggleStreamAsync(display, width, height, streamAction);
+                }
                 else
                 {
                     _isBusy = true;
@@ -439,8 +510,8 @@ private static readonly Random _randomFrameRandom = new();
                         var glitchCount = glitchPhoto ? Math.Clamp(_glitchPhotoCount, 1, 12) : 1;
 
                         DrawBusy(display, width, height, glitchPhoto
-                            ? (glitchCount > 1 ? $"GLITCH x{glitchCount}..." : "GLITCH FOTO...")
-                            : (fullHq ? "FOTO HQ..." : "ZDJECIE..."));
+                            ? (glitchCount > 1 ? $"GLITCH x{glitchCount}..." : "GLITCH PHOTO...")
+                            : (fullHq ? "PHOTO HQ..." : "PHOTO..."));
 
                         if (fullHq)
                         {
@@ -473,7 +544,7 @@ private static readonly Random _randomFrameRandom = new();
                         _lastCapturedPath = lastPath;
                         DrawSaved(display, width, height, glitchPhoto
                             ? (glitchCount > 1 ? $"GLITCH x{glitchCount} OK" : "GLITCH OK")
-                            : (fullHq ? "FOTO HQ OK" : "FOTO PREVIEW OK"));
+                            : (fullHq ? "PHOTO HQ OK" : "PHOTO PREVIEW OK"));
                         await Task.Delay(glitchPhoto && glitchCount > 1 ? 650 : 350);
                     }
                     catch (Exception ex)
@@ -508,6 +579,9 @@ private static readonly Random _randomFrameRandom = new();
                 _previewRecordStream = null;
                 _previewRecording = false;
             }
+
+            StopAudioRecordingForVideo();
+            StopStreamCore(logOnly: true);
         }
         catch { }
 
