@@ -23,6 +23,8 @@ public static partial class Program
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(_settingsFilePath));
             ApplyApiSettings(doc.RootElement, preview: null);
+            if (TryGetString(doc.RootElement, "webPasswordHash", out var webPasswordHash))
+                SetWebPasswordHashFromDisk(webPasswordHash);
             Console.WriteLine($"[SETTINGS] loaded {_settingsFilePath}");
         }
         catch (Exception ex)
@@ -104,6 +106,7 @@ public static partial class Program
                 blueScale = _blueScale,
                 lowSaveGamma = _lowSaveGamma,
                 lowGrayYellowFix = _lowGrayYellowFix,
+                webPasswordHash = CurrentWebPasswordHashForSnapshot(),
                 preview = new
                 {
                     ev = _previewSettings.Ev,

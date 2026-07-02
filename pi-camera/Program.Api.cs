@@ -29,8 +29,15 @@ public static partial class Program
 
             app.UseDefaultFiles();
             app.UseStaticFiles();
+            app.Use(EnforceOptionalWebAuthenticationAsync);
 
             app.MapGet("/", () => Results.Redirect("/index.html"));
+
+            app.MapGet("/api/auth/status", (HttpContext context) => Results.Ok(CurrentWebAuthStatus(context)));
+            app.MapPost("/api/auth/login", async (HttpContext context) => await LoginWebAsync(context));
+            app.MapPost("/api/auth/logout", (HttpContext context) => LogoutWeb(context));
+            app.MapPost("/api/auth/password", async (HttpContext context) => await SetWebPasswordAsync(context));
+            app.MapPost("/api/auth/password/clear", (HttpContext context) => ClearWebPasswordFromApi(context));
 
             app.MapGet("/api/status", () => Results.Ok(new
             {
@@ -553,6 +560,7 @@ public static partial class Program
                 audioSampleRate = _audioSampleRate,
                 audioBitrateKbps = _audioBitrateKbps,
                 audioActive = ResolveAudioCaptureSource()?.Label,
+                webAuthEnabled = IsWebPasswordEnabled(),
                 previewFps = _previewFps,
                 randomFrameMinFps = _randomFrameMinFps,
                 randomFrameMaxFps = _randomFrameMaxFps,

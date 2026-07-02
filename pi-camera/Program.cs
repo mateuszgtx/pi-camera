@@ -377,6 +377,7 @@ private static readonly Random _randomFrameRandom = new();
         AddHardwareButton(extraGpioButtons, usedGpioPins, buttonNextPin, "NEXT", () => HandleHardwareButtonAsync("next", preview, display, width, height, outputDir));
         AddHardwareButton(extraGpioButtons, usedGpioPins, buttonGalleryPin, "GALLERY", () => HandleHardwareButtonAsync("gallery", preview, display, width, height, outputDir));
         AddHardwareButton(extraGpioButtons, usedGpioPins, buttonVideoPin, "VIDEO", () => HandleHardwareButtonAsync("video", preview, display, width, height, outputDir));
+        _ = Task.Run(() => HardwarePasswordResetLoopAsync(extraGpioButtons));
 
         if (touch is not null)
         {

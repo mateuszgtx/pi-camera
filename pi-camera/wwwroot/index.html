@@ -7,6 +7,16 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="loginOverlay" class="loginOverlay hidden">
+  <div class="loginCard">
+    <div class="loginTitle">CEGŁA locked</div>
+    <div class="mini muted">Enter the web panel password to control the camera.</div>
+    <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Password" onkeydown="if(event.key==='Enter')loginWeb()">
+    <button class="primary" onclick="loginWeb()">Unlock</button>
+    <div id="loginMessage" class="mini bad"></div>
+  </div>
+</div>
+
 <div id="app">
   <div id="previewWrap">
     <div id="viewFiltered" class="view hidden">
@@ -71,6 +81,7 @@
       <button id="tab-photo" onclick="tab('photo')">Photo</button>
       <button id="tab-look" onclick="tab('look')">Color</button>
       <button id="tab-advanced" onclick="tab('advanced')">Live</button>
+      <button id="tab-security" onclick="tab('security')">Security</button>
       <button id="tab-wifi" onclick="tab('wifi');loadNetwork()">WiFi</button>
       <button id="tab-audio" onclick="tab('audio');loadAudio()">Audio</button>
     </div>
@@ -150,6 +161,27 @@
       </div>
     </div>
 
+
+    <div id="security" class="section">
+      <div class="card grid">
+        <div class="row">
+          <div class="rowTop"><label>Web password</label><span class="val" id="authStatusV">Off</span></div>
+          <div class="mini muted">Password protection is optional and is off by default. When enabled, API actions, preview streams, gallery files and settings require login.</div>
+        </div>
+        <div class="row">
+          <div class="rowTop"><label>Set or change password</label></div>
+          <input id="webPassword" type="password" autocomplete="new-password" placeholder="New password" onkeydown="if(event.key==='Enter')setWebPassword()">
+          <div class="buttonLine">
+            <button class="primary" onclick="setWebPassword()">Save password</button>
+            <button class="danger" onclick="clearWebPassword()">Remove password</button>
+          </div>
+          <div id="authHelp" class="mini muted">Emergency reset: hold all assigned function GPIO buttons except the shutter for 10 seconds.</div>
+        </div>
+        <div class="row">
+          <button class="ghost" onclick="logoutWeb()">Logout this browser</button>
+        </div>
+      </div>
+    </div>
 
 
     <div id="audio" class="section">

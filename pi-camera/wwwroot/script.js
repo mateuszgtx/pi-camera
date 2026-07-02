@@ -3,15 +3,133 @@ let bluetoothScanActive=false, bluetoothScanTimer=null, bluetoothActionBusy=fals
 let audioListenActive=false;
 let audioListenAbort=null, audioListenContext=null, audioListenProcessor=null;
 let audioListenQueue=[], audioListenQueuedSamples=0, audioListenSampleRate=48000;
+let authStatus={enabled:false,authenticated:true};
+
+const rawFetch=window.fetch.bind(window);
+window.fetch=async (...args)=>{
+  const response=await rawFetch(...args);
+  if(response.status===401){
+    showLogin();
+    throw new Error('auth required');
+  }
+  return response;
+};
 
 const $=id=>document.getElementById(id);
 
 function toast(t){
   const s=$('status');
+  if(!s) return;
   s.textContent=t;
   s.classList.add('show');
   clearTimeout(toast.t);
   toast.t=setTimeout(()=>s.classList.remove('show'),1500);
+}
+
+
+function showLogin(message=''){
+  const overlay=$('loginOverlay');
+  if(overlay) overlay.classList.remove('hidden');
+  const msg=$('loginMessage');
+  if(msg) msg.textContent=message;
+  setTimeout(()=>$('loginPassword')?.focus(),60);
+}
+
+function hideLogin(){
+  const overlay=$('loginOverlay');
+  if(overlay) overlay.classList.add('hidden');
+  const pass=$('loginPassword');
+  if(pass) pass.value='';
+  const msg=$('loginMessage');
+  if(msg) msg.textContent='';
+}
+
+async function checkAuth(){
+  try{
+    const r=await rawFetch('/api/auth/status?ts='+Date.now(),{cache:'no-store'});
+    authStatus=await r.json();
+    renderSecurityStatus();
+    if(authStatus.enabled && !authStatus.authenticated){
+      showLogin();
+      return false;
+    }
+    hideLogin();
+    return true;
+  }catch(e){
+    hideLogin();
+    return true;
+  }
+}
+
+async function loginWeb(){
+  const pass=$('loginPassword')?.value||'';
+  const msg=$('loginMessage');
+  if(msg) msg.textContent='';
+  try{
+    const r=await rawFetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pass})});
+    if(!r.ok){
+      if(msg) msg.textContent='Wrong password';
+      return;
+    }
+    authStatus=await r.json();
+    hideLogin();
+    toast('Unlocked');
+    await loadSettings();
+    loadPhotos();
+    previewMode(currentMode);
+  }catch(e){
+    if(msg) msg.textContent='Login error';
+  }
+}
+
+function renderSecurityStatus(){
+  const enabled = state?.webAuthEnabled ?? authStatus.enabled;
+  const status=$('authStatusV');
+  if(status){
+    status.textContent=enabled?'On':'Off';
+    status.classList.toggle('powerOn',!!enabled);
+    status.classList.toggle('powerOff',!enabled);
+  }
+  const help=$('authHelp');
+  if(help) help.textContent=enabled
+    ? 'Password is enabled. Emergency reset: hold all assigned function GPIO buttons except the shutter for 10 seconds.'
+    : 'Password is off. You can set it here; defaults never enable it automatically.';
+}
+
+async function setWebPassword(){
+  const input=$('webPassword');
+  const password=(input?.value||'').trim();
+  if(password.length<4){toast('Password min. 4 chars');return;}
+  try{
+    const r=await fetch('/api/auth/password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok){toast(data.message||'Password error');return;}
+    authStatus={enabled:true,authenticated:true};
+    state.webAuthEnabled=true;
+    if(input) input.value='';
+    renderSecurityStatus();
+    toast('Password saved');
+  }catch(e){toast('Password error')}
+}
+
+async function clearWebPassword(){
+  if(!confirm('Remove web panel password?')) return;
+  try{
+    const r=await fetch('/api/auth/password/clear',{method:'POST'});
+    await r.json().catch(()=>({}));
+    if(!r.ok){toast('Password reset error');return;}
+    authStatus={enabled:false,authenticated:true};
+    state.webAuthEnabled=false;
+    renderSecurityStatus();
+    hideLogin();
+    toast('Password removed');
+  }catch(e){toast('Password reset error')}
+}
+
+async function logoutWeb(){
+  try{await rawFetch('/api/auth/logout',{method:'POST'});}catch{}
+  await checkAuth();
+  if(authStatus.enabled) showLogin('Logged out');
 }
 
 function refreshLayoutAfterDrawerChange(){
@@ -55,7 +173,7 @@ function closeLightbox(){
 
 function tab(id){
   currentTab=id;
-  for(const x of ['basic','stream','photo','look','advanced','wifi','audio']){
+  for(const x of ['basic','stream','photo','look','advanced','security','wifi','audio']){
     $(x).classList.toggle('on',x===id);
     $('tab-'+x).classList.toggle('on',x===id);
   }
@@ -719,6 +837,7 @@ async function loadSettings(){
   fillSelect('denoise',options.denoise);
 
   sync();
+  renderSecurityStatus();
 }
 
 function valText(v){
@@ -746,6 +865,7 @@ function put(id,value){
 function sync(){
   for(const k of ['captureKind','photoSource','photoFormat','videoFormat','streamUrl','streamOutputFormat','streamFps','streamBitrateKbps','streamJpegQuality','streamUseRaw','audioEnabled','audioInputMode','audioInputFormat','audioDevice','audioSampleRate','audioBitrateKbps','sensorMode','paletteMode','photoWidth','photoHeight','jpgQuality','photoEv','videoSeconds','previewFps','randomFrameMinFps','randomFrameMaxFps','randomFrameSeconds','glitchStrength','glitchChangeMs','glitchPhotoCount','selectedColorAmount','redScale','greenScale','blueScale','lowSaveGamma','lowGrayYellowFix']) put(k,state[k]);
   const st=$('streamTargetV'); if(st) st.textContent=state.streaming?'STREAM ON':(state.streamTarget||'');
+  renderSecurityStatus();
   updateMainAction();
   const p=state.preview||{};
   for(const k of ['ev','sharpness','contrast','saturation','brightness','blackLevel','darkLevel','previewPixelSize','previewColorLevels','denoise']) put(k,p[k]);
@@ -822,8 +942,15 @@ async function resetSettings(){
   }catch(e){toast('Reset error')}
 }
 
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeLightbox();closeDrawers();}});
-wireAudioMonitorEvents();
-previewMode('raw');
-loadSettings();
-loadPhotos();
+async function init(){
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeLightbox();closeDrawers();}});
+  wireAudioMonitorEvents();
+  const ok=await checkAuth();
+  if(ok){
+    previewMode('raw');
+    await loadSettings();
+    loadPhotos();
+  }
+}
+
+init();

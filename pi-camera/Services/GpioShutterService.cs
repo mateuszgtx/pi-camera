@@ -13,6 +13,9 @@ public sealed class GpioShutterService : IDisposable
     private bool _armed = true;
     private DateTime _pressedSinceUtc = DateTime.MinValue;
     private DateTime _lastTriggerUtc = DateTime.MinValue;
+    private volatile bool _isPressed;
+
+    public bool IsPressed => _isPressed;
 
     public event Func<Task>? ShutterPressed;
     public event Action<string>? StatusChanged;
@@ -58,6 +61,8 @@ public sealed class GpioShutterService : IDisposable
             }
             catch { }
 
+            _isPressed = pressed;
+
             var now = DateTime.UtcNow;
 
             if (!pressed)
@@ -93,6 +98,7 @@ public sealed class GpioShutterService : IDisposable
     public void Dispose()
     {
         _cts?.Cancel();
+        _isPressed = false;
 
         try
         {
