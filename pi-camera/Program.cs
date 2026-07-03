@@ -70,6 +70,8 @@ public static partial class Program
     private static volatile bool _previewReadyForTouch;
     private static DateTime _ignoreTouchUntilUtc = DateTime.UtcNow.AddSeconds(2);
     private static DateTime _previewStartUtc = DateTime.UtcNow;
+    private static DateTime _lastPreviewAutoRestartUtc = DateTime.MinValue;
+    private static int _previewRestartAttempts;
 
     private static Tab _tab = Tab.Preview;
 
@@ -93,7 +95,7 @@ public static partial class Program
     private static int _randomFrameMinFps = 1;
     private static int _randomFrameMaxFps = 12;
     private static int _randomFrameSeconds = 10;
-    
+
     private static int _glitchStrength = 5;
     private static int _glitchChangeMs = 700;
     private static bool _glitchPaletteEnabled = true;
@@ -108,7 +110,7 @@ public static partial class Program
     private static double _glitchSavedGreenScale;
     private static double _glitchSavedBlueScale;
     private static int _glitchSavedSelectedColorAmount;
-private static readonly Random _randomFrameRandom = new();
+    private static readonly Random _randomFrameRandom = new();
     private static readonly int[] _colorChoices = new[] { 2, 4, 8, 16, 32, 64, 128, 256 };
     private static readonly int[] _pixelChoices = new[] { 1, 2, 4, 8, 16, 32, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048 };
     private static int _selectedColorAmount = 32;
@@ -395,6 +397,7 @@ private static readonly Random _randomFrameRandom = new();
             try
             {
                 _previewReadyForTouch = true;
+                _previewRestartAttempts = 0;
 
                 lock (_lastPreviewLock)
                 {
@@ -472,8 +475,28 @@ private static readonly Random _randomFrameRandom = new();
         {
             if (_tab == Tab.Preview && !_previewReadyForTouch && !_isBusy)
             {
-                var wait = (DateTime.UtcNow - _previewStartUtc).TotalSeconds;
-                if (wait > 4)
+                var now = DateTime.UtcNow;
+                var wait = (now - _previewStartUtc).TotalSeconds;
+
+                if (wait > 8 && (now - _lastPreviewAutoRestartUtc).TotalSeconds > 6)
+                {
+                    _lastPreviewAutoRestartUtc = now;
+                    _previewRestartAttempts++;
+
+                    Console.WriteLine($"[PREVIEW] no frames for {wait:0}s, restarting preview (attempt {_previewRestartAttempts})");
+
+                    display.Clear(0x0000);
+                    display.DrawCenteredTextScaled("CAMERA RETRY", height / 2 - 34, 0xFFE0, 2);
+                    display.DrawCenteredText($"RESTART {_previewRestartAttempts}", height / 2 - 2, 0xFFFF);
+                    display.Flush();
+
+                    try { preview.Stop(); }
+                    catch { }
+
+                    await Task.Delay(400);
+                    StartPreviewSafe(preview, resetRetryCounter: false);
+                }
+                else if (wait > 4)
                 {
                     display.Clear(0x0000);
                     display.DrawCenteredTextScaled("CAMERA STARTING", height / 2 - 34, 0xFFE0, 2);
@@ -616,8 +639,11 @@ private static readonly Random _randomFrameRandom = new();
         Console.WriteLine($"[CAPTURE] request from {source}, mode={_captureKind}");
     }
 
-    private static void StartPreviewSafe(CameraPreviewService preview)
+    private static void StartPreviewSafe(CameraPreviewService preview, bool resetRetryCounter = true)
     {
+        if (resetRetryCounter)
+            _previewRestartAttempts = 0;
+
         _previewReadyForTouch = false;
         _previewStartUtc = DateTime.UtcNow;
         _ignoreTouchUntilUtc = DateTime.UtcNow.AddMilliseconds(700);

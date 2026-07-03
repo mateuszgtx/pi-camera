@@ -208,7 +208,9 @@ public static partial class Program
                         name = Path.GetFileName(path),
                         size = new FileInfo(path).Length,
                         created = File.GetCreationTime(path),
-                        url = "/api/photos/" + Uri.EscapeDataString(Path.GetFileName(path))
+                        kind = IsVideoFile(path) ? "video" : IsRawPhotoFile(path) ? "raw" : "image",
+                        url = "/api/photos/" + Uri.EscapeDataString(Path.GetFileName(path)),
+                        previewUrl = IsPhotoFile(path) ? "/api/photos/" + Uri.EscapeDataString(Path.GetFileName(path)) + "/preview.jpg" : null
                     })
                     .ToList();
 
@@ -226,6 +228,34 @@ public static partial class Program
                 return Results.File(path, ContentTypeFor(path), enableRangeProcessing: true);
             });
 
+            app.MapGet("/api/photos/{file}/preview.jpg", async (string file) =>
+            {
+                var safeName = Path.GetFileName(Uri.UnescapeDataString(file));
+                var path = Path.Combine(outputDir, safeName);
+
+                if (!File.Exists(path) || !IsPhotoFile(path))
+                    return Results.NotFound();
+
+                var previewPath = GalleryPreviewPathFor(path);
+
+                if (IsRawPhotoFile(path))
+                {
+                    if (!File.Exists(previewPath))
+                    {
+                        if (TryFindRawCompanionImage(path, out var companionPath))
+                            await ImageLoader.SaveJpegPreviewAsync(companionPath, previewPath, 1600, Math.Clamp(_jpgQuality, 70, 95));
+                        else
+                            return Results.NotFound(new { ok = false, message = "No preview is available for this RAW/DNG file." });
+                    }
+                }
+                else if (!File.Exists(previewPath) || File.GetLastWriteTimeUtc(previewPath) < File.GetLastWriteTimeUtc(path))
+                {
+                    await ImageLoader.SaveJpegPreviewAsync(path, previewPath, 1600, Math.Clamp(_jpgQuality, 70, 95));
+                }
+
+                return Results.File(previewPath, "image/jpeg", enableRangeProcessing: true);
+            });
+
             app.MapDelete("/api/photos/{file}", (string file) =>
             {
                 var safeName = Path.GetFileName(Uri.UnescapeDataString(file));
@@ -235,6 +265,7 @@ public static partial class Program
                     return Results.NotFound(new { ok = false, message = "File not found" });
 
                 File.Delete(path);
+                TryDelete(GalleryPreviewPathFor(path));
                 return Results.Ok(new { ok = true });
             });
 
@@ -798,26 +829,6 @@ public static partial class Program
         if (prop.ValueKind == JsonValueKind.Number && prop.TryGetDouble(out value)) return true;
         if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value)) return true;
         return false;
-    }
-
-    private static bool IsMediaFile(string path)
-    {
-        var ext = Path.GetExtension(path).ToLowerInvariant();
-        return ext is ".jpg" or ".jpeg" or ".png" or ".bmp" or ".dng" or ".avi" or ".mp4" or ".mjpeg" or ".rawmjpeg";
-    }
-
-    private static string ContentTypeFor(string path)
-    {
-        return Path.GetExtension(path).ToLowerInvariant() switch
-        {
-            ".png" => "image/png",
-            ".bmp" => "image/bmp",
-            ".dng" => "image/x-adobe-dng",
-            ".avi" => "video/x-msvideo",
-            ".mp4" => "video/mp4",
-            ".mjpeg" or ".rawmjpeg" => "video/x-motion-jpeg",
-            _ => "image/jpeg"
-        };
     }
 
 }

@@ -47,7 +47,7 @@ public static partial class Program
             return await TakeFullHqPhotoAsync(outputDir, finalPath);
         }
 
-        await CaptureRawPhotoAsync(outputDir, finalPath, stamp);
+        await CaptureRawPhotoAsync(outputDir, finalPath);
         return finalPath;
     }
 
@@ -154,10 +154,37 @@ public static partial class Program
         }
     }
 
-    private static async Task CaptureRawPhotoAsync(string outputDir, string finalPath, string stamp)
+    private static async Task CaptureRawPhotoAsync(string outputDir, string finalPath)
     {
         var isRawJpg = _photoFormat.Equals("rawjpg", StringComparison.OrdinalIgnoreCase);
-        var rawPath = isRawJpg ? Path.Combine(outputDir, $"IMG_{stamp}.dng") : finalPath;
+        var stem = Path.GetFileNameWithoutExtension(finalPath);
+
+        // Keep the RAW sidecar name aligned with the visible photo name. This is
+        // important for burst/glitch photos, where finalPath can contain suffixes
+        // such as _G01, _G02, etc.
+        var rawPath = isRawJpg ? Path.Combine(outputDir, stem + ".dng") : finalPath;
+        var previewPath = GalleryPreviewPathFor(rawPath);
+
+        // rpicam-still normally writes a JPEG and a DNG sidecar when --raw is used.
+        // In pure RAW mode we capture to a temporary JPEG, move the generated DNG to
+        // finalPath, then turn the temporary JPEG into the gallery preview.
+        var jpgOutputPath = isRawJpg
+            ? finalPath
+            : Path.Combine(outputDir, $"TMP_RAW_PREVIEW_{stem}.jpg");
+        var generatedRawPath = Path.ChangeExtension(jpgOutputPath, ".dng");
+
+        if (!isRawJpg)
+        {
+            TryDelete(jpgOutputPath);
+            TryDelete(generatedRawPath);
+            TryDelete(rawPath);
+            TryDelete(previewPath);
+        }
+        else
+        {
+            TryDelete(rawPath);
+            TryDelete(previewPath);
+        }
 
         var args = new List<string>
         {
@@ -172,7 +199,7 @@ public static partial class Program
             "--saturation", _previewSettings.Saturation.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "--brightness", _previewSettings.Brightness.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "--denoise", _previewSettings.Denoise,
-            "-o", isRawJpg ? finalPath : rawPath
+            "-o", jpgOutputPath
         };
 
         AddSensorArgs(args, true);
@@ -203,6 +230,43 @@ public static partial class Program
         {
             var msg = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
             throw new Exception("rpicam-still RAW failed: " + msg.Trim());
+        }
+
+        if (File.Exists(generatedRawPath) && !string.Equals(generatedRawPath, rawPath, StringComparison.OrdinalIgnoreCase))
+        {
+            File.Move(generatedRawPath, rawPath, overwrite: true);
+        }
+
+        if (!File.Exists(rawPath))
+        {
+            var msg = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+            throw new Exception($"rpicam-still RAW did not create the expected DNG file: {Path.GetFileName(rawPath)}. {msg.Trim()}");
+        }
+
+        try
+        {
+            if (!File.Exists(jpgOutputPath))
+            {
+                // Some rpicam-still versions/configurations can produce the DNG sidecar
+                // without leaving a usable JPEG. Capture a small fallback JPEG so the
+                // gallery still has something to display for RAW/DNG files.
+                await CaptureStillJpegAsync(jpgOutputPath, _photoWidth, _photoHeight);
+            }
+
+            await ImageLoader.SaveJpegPreviewAsync(jpgOutputPath, previewPath, 1600, Math.Clamp(_jpgQuality, 70, 95));
+
+            if (!File.Exists(previewPath))
+                throw new Exception("RAW preview file was not created");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[RAW PREVIEW] " + ex.Message);
+            TrySaveCurrentFrameGalleryPreview(rawPath);
+        }
+        finally
+        {
+            if (!isRawJpg)
+                TryDelete(jpgOutputPath);
         }
     }
 

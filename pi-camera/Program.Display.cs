@@ -126,10 +126,7 @@ public static partial class Program
     {
         _galleryFiles = Directory.Exists(outputDir)
             ? Directory.GetFiles(outputDir)
-                .Where(f => f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
-                            f.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
-                            f.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase) ||
-                            f.EndsWith(".dng", StringComparison.OrdinalIgnoreCase))
+                .Where(IsPhotoFile)
                 .OrderByDescending(File.GetLastWriteTime)
                 .ToList()
             : new List<string>();
@@ -161,16 +158,11 @@ public static partial class Program
         var file = _galleryFiles[_galleryIndex];
         display.DrawText($"{_galleryIndex + 1}/{_galleryFiles.Count}", 210, 16, 0xFFFF);
 
-        if (file.EndsWith(".dng", StringComparison.OrdinalIgnoreCase))
-        {
-            display.DrawCenteredTextScaled("RAW/DNG", 100, 0xFFE0, 2);
-            display.DrawCenteredText("RAW PREVIEW NOT SUPPORTED", 135, 0xFFFF);
-        }
-        else
+        if (TryGetGalleryDisplayImagePath(file, out var displayImagePath))
         {
             try
             {
-                var rgb = ImageLoader.LoadJpegRgb(file, out var imgW, out var imgH);
+                var rgb = ImageLoader.LoadImageRgb(displayImagePath, out var imgW, out var imgH);
                 display.DrawRgbFrameScaledKeepAspect(rgb, imgW, imgH, 0, 46, width, height - 46 - 44);
             }
             catch (Exception ex)
@@ -178,6 +170,11 @@ public static partial class Program
                 display.DrawCenteredTextScaled("FILE ERROR", 90, 0xF800, 2);
                 display.DrawWrappedText(ex.Message, 8, 130, 0xFFFF);
             }
+        }
+        else
+        {
+            display.DrawCenteredTextScaled("RAW/DNG", 100, 0xFFE0, 2);
+            display.DrawCenteredText("NO JPG PREVIEW", 135, 0xFFFF);
         }
 
         display.FillRect(0, height - 64, width, 20, 0x0000);
@@ -253,8 +250,13 @@ public static partial class Program
         display.FillRect(0, 0, width, 28, 0x0000);
         var battery = BatteryStatusText();
         display.DrawText(string.IsNullOrWhiteSpace(battery) ? "BAT --" : battery, 4, 10, 0x07E0);
-        display.DrawText(CaptureKindLabel(_captureKind), 74, 10, 0xFFFF);
-        display.DrawText(PaletteModeLabel(_paletteMode), 134, 10, 0xFFE0);
+
+        // Keep the preview top bar readable on small TFT screens. Longer full labels
+        // such as GLITCH PHOTO / GLITCH VIDEO are still shown in the Mode tab, but
+        // abbreviated here so they do not collide with the palette name.
+        display.DrawText(CaptureKindTopBarLabel(_captureKind), 74, 10, 0xFFFF);
+        display.DrawText(PaletteModeTopBarLabel(_paletteMode), 134, 10, 0xFFE0);
+
         var statusX = 220;
         if (_previewRecording)
         {
@@ -269,6 +271,40 @@ public static partial class Program
         if (IsAudioEnabled())
             display.DrawText("MIC", statusX, 10, 0xFFE0);
         display.DrawText(DateTime.Now.ToString("HH:mm"), width - 38, 10, 0xFFFF);
+    }
+
+    private static string CaptureKindTopBarLabel(CaptureKind kind)
+    {
+        return kind switch
+        {
+            CaptureKind.Photo => "PHOTO",
+            CaptureKind.Video => "VIDEO",
+            CaptureKind.RandomFrame => "RANDOM",
+            CaptureKind.GlitchPhoto => "GPHOTO",
+            CaptureKind.GlitchVideo => "GVIDEO",
+            CaptureKind.Stream => "STREAM",
+            _ => kind.ToString().ToUpperInvariant()
+        };
+    }
+
+    private static string PaletteModeTopBarLabel(PaletteMode mode)
+    {
+        return mode switch
+        {
+            PaletteMode.Green565 => "GRN565",
+            PaletteMode.Balanced => "BAL",
+            PaletteMode.Green => "GREEN",
+            PaletteMode.Yellow => "YELLOW",
+            PaletteMode.Blue => "BLUE",
+            PaletteMode.Red => "RED",
+            PaletteMode.Cyan => "CYAN",
+            PaletteMode.Magenta => "MAG",
+            PaletteMode.Amber => "AMBER",
+            PaletteMode.Gray => "GRAY",
+            PaletteMode.Warm => "WARM",
+            PaletteMode.Cold => "COLD",
+            _ => mode.ToString().ToUpperInvariant()
+        };
     }
 
     private static void DrawTabs(FramebufferDisplay display, int width, int height)
