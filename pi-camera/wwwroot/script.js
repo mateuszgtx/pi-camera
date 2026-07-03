@@ -65,20 +65,31 @@ async function loginWeb() {
     const pass = $('loginPassword')?.value || '';
     const msg = $('loginMessage');
     if (msg) msg.textContent = '';
+
+    let r;
     try {
-        const r = await rawFetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pass }) });
-        if (!r.ok) {
-            if (msg) msg.textContent = 'Wrong password';
-            return;
-        }
-        authStatus = await r.json();
-        hideLogin();
-        toast('Unlocked');
+        r = await rawFetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pass }), cache: 'no-store' });
+    } catch (e) {
+        if (msg) msg.textContent = 'Login error';
+        return;
+    }
+
+    if (!r.ok) {
+        if (msg) msg.textContent = r.status === 401 ? 'Wrong password' : 'Login error';
+        return;
+    }
+
+    authStatus = await r.json().catch(() => ({ enabled: true, authenticated: true }));
+    hideLogin();
+    toast('Unlocked');
+
+    try {
         await loadSettings();
         loadPhotos();
         previewMode(currentMode);
     } catch (e) {
-        if (msg) msg.textContent = 'Login error';
+        console.warn('Post-login refresh failed', e);
+        toast('Unlocked. Refresh page');
     }
 }
 

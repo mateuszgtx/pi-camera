@@ -13,6 +13,30 @@ public static partial class Program
     private static readonly Dictionary<string, DateTime> _webSessions = new(StringComparer.Ordinal);
     private static string _webPasswordHash = "";
 
+    private static CookieOptions WebAuthCookieOptions(HttpContext context, DateTime? expiresUtc = null)
+    {
+        var options = new CookieOptions
+        {
+            HttpOnly = true,
+            SameSite = SameSiteMode.Strict,
+            Secure = context.Request.IsHttps,
+            Path = "/"
+        };
+
+        if (expiresUtc.HasValue)
+            options.Expires = expiresUtc.Value;
+
+        return options;
+    }
+
+    private static void DeleteWebAuthCookies(HttpContext context)
+    {
+        context.Response.Cookies.Delete(WebAuthCookieName, new CookieOptions { Path = "/" });
+        context.Response.Cookies.Delete(WebAuthCookieName, new CookieOptions { Path = "/api" });
+        context.Response.Cookies.Delete(WebAuthCookieName, new CookieOptions { Path = "/api/auth" });
+        context.Response.Cookies.Delete(WebAuthCookieName);
+    }
+
     private static bool IsWebPasswordEnabled()
     {
         lock (_webAuthLock)
@@ -90,7 +114,7 @@ public static partial class Program
                 _webSessions.Remove(token);
         }
 
-        context.Response.Cookies.Delete(WebAuthCookieName);
+        DeleteWebAuthCookies(context);
         return Results.Ok(new { ok = true });
     }
 
@@ -121,7 +145,7 @@ public static partial class Program
     private static IResult ClearWebPasswordFromApi(HttpContext context)
     {
         ClearWebPassword("web panel");
-        context.Response.Cookies.Delete(WebAuthCookieName);
+        DeleteWebAuthCookies(context);
         return Results.Ok(new { ok = true, enabled = false, authenticated = true });
     }
 
@@ -166,13 +190,8 @@ public static partial class Program
             _webSessions[token] = expiresUtc;
         }
 
-        context.Response.Cookies.Append(WebAuthCookieName, token, new CookieOptions
-        {
-            HttpOnly = true,
-            SameSite = SameSiteMode.Strict,
-            Secure = context.Request.IsHttps,
-            Expires = expiresUtc
-        });
+        DeleteWebAuthCookies(context);
+        context.Response.Cookies.Append(WebAuthCookieName, token, WebAuthCookieOptions(context, expiresUtc));
     }
 
     private static void PurgeExpiredWebSessions(DateTime now)
