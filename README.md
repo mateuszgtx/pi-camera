@@ -573,6 +573,4 @@ The systemd example runs the service as `root` because the application may need 
 ## Notes for maintainers
 
 * The project currently targets `net10.0`.
-* `pi-camera.csproj` contains two `System.Device.Gpio` references with different versions. Keep only one version before publishing the project publicly.
 * Web password protection is optional and off by default. Do not expose the panel/API to an untrusted network without enabling it and adding network-level protection.
-* Consider adding a `LICENSE` file before publishing.
