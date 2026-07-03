@@ -30,13 +30,31 @@ Application startup and main loop. It contains default settings, argument parsin
 Configures the ASP.NET Core HTTP server:
 
 - static web UI from `wwwroot`,
+- optional cookie-based web authentication,
 - application status,
 - JPEG preview and MJPEG stream,
+- context-aware capture action,
 - photo capture,
-- video toggle,
+- video and stream toggles,
 - gallery/media endpoints,
-- settings read/update endpoints,
+- settings read/update/reset endpoints,
 - Wi-Fi endpoints.
+
+### `Program.Auth.cs`
+
+Handles optional web password protection, login/logout, session cookies and salted password hashing. Password protection is disabled by default.
+
+### `Program.PersistentSettings.cs`
+
+Loads, saves and resets user-configurable settings from a JSON file. The default location is `~/.config/pi-camera/settings.json`, unless overridden with `--settings-file`.
+
+### `Program.HardwareReset.cs`
+
+Contains the local physical recovery reset loop used when the web password needs to be cleared from the camera body.
+
+### `Program.Stream.cs`
+
+Handles external streaming through `ffmpeg`, using processed or raw preview frames as stream input.
 
 ### `Program.Capture.cs`
 
@@ -127,7 +145,7 @@ Writes directly to the framebuffer in RGB565 format. It provides drawing methods
 
 ### `GpioShutterService`
 
-Reads a GPIO input as an `InputPullUp` button. It applies a stable-press filter and cooldown to reduce contact bounce.
+Reads a GPIO input as an `InputPullUp` button. It applies a stable-press filter and cooldown to reduce contact bounce, and exposes the current pressed state for local hardware recovery logic.
 
 ### `TouchInputService`
 
@@ -162,11 +180,12 @@ The program uses static fields for the current tab, capture mode, preview settin
 | `/dev/input/eventX` | Touchscreen input |
 | GPIO | Hardware buttons |
 
+## 3D model files
+
+Optional 3D-printable enclosure files live in `stl/`. Print settings and assembly notes live in `stl/README.md`.
+
 ## Extension ideas
 
-- Add a persistent configuration file instead of relying only on startup arguments.
-- Add authentication or token-based access control to the HTTP API.
 - Add unit tests for argument parsing, palette logic and settings validation.
-- Keep only one `System.Device.Gpio` version in `pi-camera.csproj`.
-- Add a `LICENSE` file.
 - Add packaging scripts for a repeatable Raspberry Pi deployment.
+- Add editable CAD source files such as STEP or FreeCAD files next to the ready-to-print STL files.
