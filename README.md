@@ -22,6 +22,7 @@ The application uses Raspberry Pi Camera tools (`rpicam-vid` and `rpicam-still`)
 * Persistent settings saved to a JSON file and restored after restart.
 * Reset-to-defaults action from the web panel and HTTP API.
 * Optional web password protection for the HTTP API and browser panel; disabled by default.
+* Optional 3D-printable enclosure files in `stl/`.
 * Wi-Fi and hotspot management through `NetworkManager`/`nmcli`.
 * Optional battery status reading from a file, `/sys/class/power_supply`, or a custom command.
 
@@ -29,6 +30,8 @@ The application uses Raspberry Pi Camera tools (`rpicam-vid` and `rpicam-still`)
 
 ```text
 pi-camera-master/
+├── LICENSE                       # repository license
+├── README.md
 ├── pi-camera.slnx
 ├── pi-camera/
 │   ├── Program.cs                    # application startup, argument parsing, main loop
@@ -38,7 +41,7 @@ pi-camera-master/
 │   ├── Program.Capture.cs            # photo capture through rpicam-still
 │   ├── Program.Display.cs            # screen UI, tabs, gallery, status messages
 │   ├── Program.Glitch.cs             # glitch effects for photos and videos
-│   ├── Program.HardwareReset.cs      # GPIO hold combo for emergency password reset
+│   ├── Program.HardwareReset.cs      # physical recovery reset helper
 │   ├── Program.ImageProcessing.cs    # pixelation, palettes and visual processing
 │   ├── Program.Input.cs              # keyboard, touch and GPIO input
 │   ├── Program.Network.cs            # Wi-Fi, hotspot, IP and battery status
@@ -58,6 +61,9 @@ pi-camera-master/
 │   │   └── PreviewSettings.cs
 │   ├── wwwroot/index.html            # browser-based control panel
 │   └── pi-camera.csproj
+├── stl/
+│   ├── README.md                     # 3D-printing and enclosure notes
+│   └── *.stl                         # ready-to-print enclosure files
 └── docs/
     ├── API.md
     ├── ARCHITECTURE.md
@@ -407,7 +413,7 @@ The **Reset defaults** button in **Settings → Mode** restores the built-in def
 
 Password protection is configured in **Settings → Security**. It is disabled by default. After a password is set, API calls, preview streams, gallery files and settings require login. Use **Remove password** in the same tab to turn it off.
 
-Emergency password reset from the device: hold all configured function GPIO buttons except the shutter button for 10 seconds. Function buttons are the buttons assigned with `--button-tab-pin`, `--button-mode-pin`, `--button-prev-pin`, `--button-next-pin`, `--button-gallery-pin` and `--button-video-pin`. At least two function buttons must be configured for this emergency reset loop to run.
+A local physical recovery reset is available from the camera controls if the web password is forgotten. Keep physical access to the device restricted in untrusted environments.
 
 ### Keyboard
 
@@ -457,6 +463,12 @@ Buttons are read as `InputPullUp`, so the simplest wiring is a button between GP
 | `GlitchPhoto` | One photo or a burst of photos with randomized glitch settings |
 | `GlitchVideo` | Video recording with changing glitch effects                   |
 | `Stream`      | External stream using the configured stream URL and format      |
+
+## 3D-printable case
+
+Optional 3D-printable enclosure files are available in the [`stl`](stl/) directory.
+
+The STL files are ready-to-print 3D models for the camera enclosure and related parts. Suggested print settings and assembly notes are documented in [`stl/README.md`](stl/README.md).
 
 ## Output files
 
@@ -562,17 +574,23 @@ Full endpoint documentation is in [`docs/API.md`](docs/API.md).
 
 ## Security notes
 
-The HTTP API has optional cookie-based password protection. It is disabled by default so existing local/offline setups keep working. Set a password in **Settings → Security** to protect API actions, preview streams, gallery files and settings. The password is stored in the persistent settings JSON as a salted PBKDF2-SHA256 hash, not as plain text.
+The HTTP API and web panel support optional cookie-based password protection. Password protection is disabled by default so existing local and offline setups continue to work without additional configuration.
 
-Emergency reset is available from the camera body: hold all configured function GPIO buttons except the shutter for 10 seconds to clear the web password and save that state.
+A password can be enabled in **Settings → Security**. When enabled, protected web/API features require authentication, including capture actions, settings changes, preview streams and gallery access.
+
+The password is not stored as plain text. The application stores only a salted password hash in the persistent settings file.
+
+A local physical recovery reset is available from the camera controls if the web password is forgotten. If the camera is used in an untrusted environment, physical access to the device should be restricted.
 
 Do not expose the camera web panel to public or untrusted networks without additional access control, firewall rules, a VPN, or a reverse proxy with authentication.
 
-The systemd example runs the service as `root` because the application may need direct hardware access. For a production deployment, you can create a dedicated Linux user and grant it only the required permissions for framebuffer, input, camera and GPIO access.
+The systemd example runs the service as `root` because the application may need direct hardware access. For a production deployment, consider creating a dedicated Linux user and granting only the permissions required for framebuffer, input, camera and GPIO access.
+
+## License
+
+This project, including software, documentation and 3D model files, is released under the CEGŁA Source-Available License. See the [LICENSE](LICENSE) file for details.
 
 ## Notes for maintainers
 
 * The project currently targets `net10.0`.
-* `pi-camera.csproj` contains two `System.Device.Gpio` references with different versions. Keep only one version before publishing the project publicly.
 * Web password protection is optional and off by default. Do not expose the panel/API to an untrusted network without enabling it and adding network-level protection.
-* Consider adding a `LICENSE` file before publishing.

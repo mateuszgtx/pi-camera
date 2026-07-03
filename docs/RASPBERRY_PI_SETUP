@@ -228,7 +228,11 @@ Example using a command:
 
 The value can be either a number such as `74` or a percentage such as `74%`.
 
-## 10. Troubleshooting
+## 10. 3D-printable enclosure
+
+Ready-to-print enclosure files are stored in [`../stl`](../stl). See [`../stl/README.md`](../stl/README.md) for file descriptions, suggested print settings and assembly notes.
+
+## 11. Troubleshooting
 
 ### Camera preview does not start
 
