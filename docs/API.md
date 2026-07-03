@@ -8,6 +8,62 @@ http://0.0.0.0:5000
 
 Panel webowy znajduje się w `wwwroot/index.html`, a główna strona `/` przekierowuje do `/index.html`.
 
+## Authentication
+
+Password protection is optional and disabled by default. When a web password is configured in **Settings → Security**, API endpoints require a valid login session cookie, except for the authentication endpoints listed below.
+
+Protected endpoints return `401 Unauthorized` with `authRequired: true` when the request is not authenticated.
+
+### Authentication status
+
+```http
+GET /api/auth/status
+```
+
+Returns whether password protection is enabled and whether the current browser/session is authenticated.
+
+### Login
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+```
+
+```json
+{ "password": "your-password" }
+```
+
+On success, the server creates an HTTP-only session cookie.
+
+### Logout
+
+```http
+POST /api/auth/logout
+```
+
+Removes the current browser session cookie.
+
+### Set or change password
+
+```http
+POST /api/auth/password
+Content-Type: application/json
+```
+
+```json
+{ "password": "new-password" }
+```
+
+The password must have at least 4 characters. The password is stored as a salted hash in the persistent settings file, not as plain text.
+
+### Remove password
+
+```http
+POST /api/auth/password/clear
+```
+
+Clears web password protection and saves that state to the persistent settings file.
+
 ## Status aplikacji
 
 ```http
@@ -93,6 +149,23 @@ Endpoint ustawia tryb `Video` i przełącza nagrywanie.
 ```bash
 curl -X POST http://<IP_RASPBERRY_PI>:5000/api/video/toggle
 ```
+
+### Context-aware action
+
+```http
+POST /api/action
+```
+
+Runs the same action as the main web-panel button. The action depends on the active `captureKind` setting:
+
+| Capture mode | Action |
+|---|---|
+| `Photo` | Queues a photo |
+| `Video` | Starts or stops video recording |
+| `RandomFrame` | Starts or stops RandomFrame recording |
+| `GlitchPhoto` | Queues glitch photo capture |
+| `GlitchVideo` | Starts or stops glitch video recording |
+| `Stream` | Starts or stops external streaming |
 
 ## Pliki mediów
 
@@ -216,6 +289,14 @@ Pola w obiekcie `preview`:
 | `previewColorLevels` | `2–256` | liczba kolorów |
 | `denoise` | `cdn_off`, `cdn_fast`, `cdn_hq` | odszumianie `rpicam` |
 
+### Reset ustawień do domyślnych
+
+```http
+POST /api/settings/reset
+```
+
+Restores built-in defaults and saves them to the persistent settings file. It does not enable any default web password.
+
 ### Dostępne opcje
 
 ```http
@@ -269,3 +350,4 @@ curl -X POST http://<IP_RASPBERRY_PI>:5000/api/network/wifi/connect \
 - `404 Not Found` — brak pliku albo brak gotowego podglądu.
 - `409 Conflict` — kamera jest zajęta.
 - `400 Bad Request` — niepoprawne dane lub próba wykonania zdjęcia w trybie wideo.
+- `401 Unauthorized` — wymagane hasło albo niepoprawna sesja logowania.
