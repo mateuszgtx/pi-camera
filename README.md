@@ -13,7 +13,8 @@ The application uses Raspberry Pi Camera tools (`rpicam-vid` and `rpicam-still`)
 * `RandomFrame` video mode, where each segment is recorded with a random FPS.
 * `Stream` capture mode for sending the processed or raw preview to an external streaming URL.
 * `GlitchPhoto` and `GlitchVideo` modes with randomized palette, pixelation and RGB channel scaling.
-* Visual presets: `NORMAL`, `LOW32`, `LOW16`, `RETRO8`, `MONO4`.
+* Visual presets: `NORMAL`, `LOW32`, `LOW16`, `RETRO8`, `VHS`, `MONO4`.
+* Adjustable `VHS` look preset with tape-style color bleed, scanlines/stripes, noise, wobble/tape drift and occasional glitches.
 * Color palettes: `GREEN565`, `BALANCED`, `GREEN`, `YELLOW`, `BLUE`, `RED`, `CYAN`, `MAGENTA`, `AMBER`, `GRAY`, `WARM`, `COLD`.
 * Keyboard, touchscreen and GPIO button control.
 * On-device media gallery.
@@ -48,6 +49,7 @@ pi-camera-master/
 │   ├── Program.PersistentSettings.cs # JSON settings load/save/reset
 │   ├── Program.Settings.cs           # presets, argument helpers and setting logic
 │   ├── Program.Stream.cs             # external video streaming
+│   ├── Program.Vhs.cs                # adjustable VHS look preset and tape/glitch effect
 │   ├── Program.Video.cs              # MJPEG/MP4 recording and RandomFrame video
 │   ├── Program.WebUi.cs              # static web UI helper
 │   ├── Services/
@@ -135,9 +137,26 @@ After startup:
 * photos and videos are saved to the directory passed with `--out`,
 * the web panel is available at `http://<RASPBERRY_PI_IP>:5000`.
 
+Optional VHS-style startup example:
+
+```bash
+sudo dotnet run --project pi-camera/pi-camera.csproj -- \
+  --fb=/dev/fb0 \
+  --width=480 \
+  --height=320 \
+  --out=/home/admin/Pictures/PiCamera \
+  --api=true \
+  --look=VHS \
+  --vhs-glitch-frequency=2 \
+  --vhs-quality=8 \
+  --vhs-scanlines=5 \
+  --vhs-noise=2 \
+  --vhs-wobble=3
+```
+
 ## Persistent settings
 
-Settings changed from the web panel or from the device controls are saved automatically to a JSON file. On the next start, the application first applies command-line defaults and then overlays the saved settings from disk.
+Settings changed from the web panel or from the device controls are saved automatically to a JSON file. On the next start, the application first applies command-line defaults and then overlays the saved settings from disk. This includes the selected look preset and all VHS controls.
 
 Default settings path:
 
@@ -409,6 +428,8 @@ The web panel uses one main action button instead of separate Photo/Video/Stream
 
 The button label changes automatically, for example `Photo`, `Video`, `Stop Video`, `Stream`, or `Stop Stream`.
 
+The visual style is selected in **Settings → Color → Look preset**. Choose `VHS` to enable the VHS tape look. The same section exposes the adjustable VHS controls: glitch frequency, quality, scanlines/stripes, noise and wobble/tape drift.
+
 The **Reset defaults** button in **Settings → Mode** restores the built-in defaults and saves them to the persistent settings file. It does not force password protection on.
 
 Password protection is configured in **Settings → Security**. It is disabled by default. After a password is set, API calls, preview streams, gallery files and settings require login. Use **Remove password** in the same tab to turn it off.
@@ -436,7 +457,7 @@ The bottom navigation bar has four tabs:
 * `GAL` — gallery,
 * `SIEC` — network.
 
-In the mode/settings tab, touching the left half decreases the selected value and touching the right half increases it. The button above the bottom navigation changes the settings page.
+In the mode/settings tab, touching the left half decreases the selected value and touching the right half increases it. The button above the bottom navigation changes the settings page. The `VHS` settings page contains `GLITCH FRQ`, `QUALITY`, `STRIPES`, `NOISE` and `WOBBLE` controls.
 
 When the application is started with `--touch-capture=true`, touching the live preview area can trigger a capture.
 
@@ -463,6 +484,48 @@ Buttons are read as `InputPullUp`, so the simplest wiring is a button between GP
 | `GlitchPhoto` | One photo or a burst of photos with randomized glitch settings |
 | `GlitchVideo` | Video recording with changing glitch effects                   |
 | `Stream`      | External stream using the configured stream URL and format      |
+
+## VHS look preset
+
+The `VHS` look preset is intended to give the live preview, preview-based photos, preview-based video recordings and processed stream output a tape-camera style without making the image look constantly broken. The base effect adds a softer analog feel, while stronger glitches appear only according to the configured glitch frequency.
+
+VHS can be enabled from:
+
+* the web panel: **Settings → Color → Look preset → VHS**,
+* the device screen: **TRYB / Mode → LOOK → VHS**,
+* command line: `--look=VHS`.
+
+VHS controls use a `0–10` scale:
+
+| Setting | CLI argument | Default | Description |
+| ------- | ------------ | ------: | ----------- |
+| Glitch frequency | `--vhs-glitch-frequency=` | `2` | How often stronger VHS glitches appear; `0` keeps only the soft tape look |
+| Quality | `--vhs-quality=` | `6` | Overall image cleanliness/detail; higher values are sharper and less degraded |
+| Scanlines / stripes | `--vhs-scanlines=` | `6` | Strength and density of horizontal VHS-style stripes |
+| Noise | `--vhs-noise=` | `4` | Amount of grain, snow and random speckles |
+| Wobble / tape drift | `--vhs-wobble=` | `4` | Horizontal image drift, tape wobble and small line shifts |
+
+Examples:
+
+Clean VHS with rare glitches:
+
+```bash
+--look=VHS --vhs-glitch-frequency=1 --vhs-quality=9 --vhs-scanlines=4 --vhs-noise=1 --vhs-wobble=2
+```
+
+Balanced VHS:
+
+```bash
+--look=VHS --vhs-glitch-frequency=2 --vhs-quality=6 --vhs-scanlines=6 --vhs-noise=4 --vhs-wobble=4
+```
+
+Heavier VHS look:
+
+```bash
+--look=VHS --vhs-glitch-frequency=5 --vhs-quality=3 --vhs-scanlines=8 --vhs-noise=7 --vhs-wobble=7
+```
+
+The VHS settings are also available through `GET /api/settings`, `POST /api/settings` and `GET /api/settings/options` as `vhsGlitchFrequency`, `vhsQuality`, `vhsScanlines`, `vhsNoise` and `vhsWobble`.
 
 ## 3D-printable case
 
@@ -509,7 +572,7 @@ Temporary `*.rawmjpeg` files and RandomFrame segment files are removed after suc
 | `--api-url=`          |           `http://0.0.0.0:5000` | HTTP listen URL                                          |
 | `--gpio-pin=`         |                            `-1` | Main shutter GPIO pin; `-1` disables it                  |
 | `--touch-capture=`    |                         `false` | Capture by touching the preview area                     |
-| `--look=`             |                         `LOW32` | Visual preset                                            |
+| `--look=`             |                         `LOW32` | Visual preset: `NORMAL`, `LOW32`, `LOW16`, `RETRO8`, `VHS`, `MONO4` |
 | `--palette=`          |                      `green565` | Color palette                                            |
 | `--colors=`           |                            `32` | Number of color levels                                   |
 | `--preview-pixel=`    |                preset-dependent | Preview pixelation/detail level                          |
@@ -521,6 +584,11 @@ Temporary `*.rawmjpeg` files and RandomFrame segment files are removed after suc
 | `--random-seconds=`   |                            `10` | RandomFrame segment length in seconds                    |
 | `--glitch-strength=`  |                             `5` | Glitch intensity, `1–10`                                 |
 | `--glitch-change-ms=` |                           `700` | GlitchVideo setting change interval in milliseconds      |
+| `--vhs-glitch-frequency=` |                         `2` | VHS glitch frequency, `0–10`; `0` keeps only the soft tape look |
+| `--vhs-quality=`     |                             `6` | VHS detail/cleanliness, `0–10`; higher = cleaner, sharper image |
+| `--vhs-scanlines=`   |                             `6` | VHS stripe/scanline strength, `0–10`                     |
+| `--vhs-noise=`       |                             `4` | VHS grain/snow amount, `0–10`                            |
+| `--vhs-wobble=`      |                             `4` | VHS horizontal drift/tape wobble, `0–10`                 |
 | `--stream-url=`       |                           empty | External stream target URL                               |
 | `--stream-format=`    |                         `auto` | Stream output format: `auto`, `flv`, `mpegts`, `rtsp`    |
 | `--stream-fps=`       |                            `15` | Stream FPS                                               |
@@ -571,6 +639,8 @@ Main endpoints include:
 * `POST /api/network/wifi/connect`
 
 Full endpoint documentation is in [`docs/API.md`](docs/API.md).
+
+VHS settings are part of the normal settings payload. Use `POST /api/settings` with fields such as `lookPreset`, `vhsGlitchFrequency`, `vhsQuality`, `vhsScanlines`, `vhsNoise` and `vhsWobble` to change the VHS effect from external tools.
 
 ## Security notes
 
