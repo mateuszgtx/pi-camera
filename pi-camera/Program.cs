@@ -102,6 +102,11 @@ public static partial class Program
     private static bool _glitchPixelsEnabled = true;
     private static bool _glitchRgbEnabled = true;
     private static int _glitchPhotoCount = 4;
+    private static int _vhsGlitchFrequency = 2;
+    private static int _vhsQuality = 6;
+    private static int _vhsScanlines = 6;
+    private static int _vhsNoise = 4;
+    private static int _vhsWobble = 4;
     private static bool _glitchVideoRecording;
     private static DateTime _glitchNextChangeUtc = DateTime.MinValue;
     private static PreviewSettings? _glitchSavedPreviewSettings;
@@ -298,6 +303,11 @@ public static partial class Program
         _glitchPixelsEnabled = BoolArg(args, "--glitch-pixels=", _glitchPixelsEnabled);
         _glitchRgbEnabled = BoolArg(args, "--glitch-rgb=", _glitchRgbEnabled);
         _glitchPhotoCount = Math.Clamp(IntArg(args, "--glitch-photo-count=", _glitchPhotoCount), 1, 12);
+        _vhsGlitchFrequency = Math.Clamp(IntArg(args, "--vhs-glitch-frequency=", _vhsGlitchFrequency), 0, 10);
+        _vhsQuality = Math.Clamp(IntArg(args, "--vhs-quality=", _vhsQuality), 0, 10);
+        _vhsScanlines = Math.Clamp(IntArg(args, "--vhs-scanlines=", _vhsScanlines), 0, 10);
+        _vhsNoise = Math.Clamp(IntArg(args, "--vhs-noise=", _vhsNoise), 0, 10);
+        _vhsWobble = Math.Clamp(IntArg(args, "--vhs-wobble=", _vhsWobble), 0, 10);
         _streamUrl = Arg(args, "--stream-url=", _streamUrl);
         _streamOutputFormat = NormalizeStreamOutputFormat(Arg(args, "--stream-format=", _streamOutputFormat));
         _streamFps = Math.Clamp(IntArg(args, "--stream-fps=", _streamFps), 1, 30);
@@ -350,6 +360,8 @@ public static partial class Program
         Console.WriteLine($"GPIO buttons: tab={PinLabel(buttonTabPin)} mode={PinLabel(buttonModePin)} prev={PinLabel(buttonPrevPin)} next={PinLabel(buttonNextPin)} gallery={PinLabel(buttonGalleryPin)} video={PinLabel(buttonVideoPin)}");
         Console.WriteLine($"Output: {outputDir}");
         Console.WriteLine($"LOOK: {_lookPreset}");
+        Console.WriteLine($"VHS glitch frequency: {_vhsGlitchFrequency}/10");
+        Console.WriteLine($"VHS quality: {_vhsQuality}/10 scanlines={_vhsScanlines}/10 noise={_vhsNoise}/10 wobble={_vhsWobble}/10");
 
         Console.CancelKeyPress += (_, e) =>
         {
@@ -415,6 +427,11 @@ public static partial class Program
                 double blueScale;
                 string paletteMode;
                 string lookPreset;
+                int vhsGlitchFrequency;
+                int vhsQuality;
+                int vhsScanlines;
+                int vhsNoise;
+                int vhsWobble;
                 double lowSaveGamma;
                 int lowGrayYellowFix;
 
@@ -429,14 +446,23 @@ public static partial class Program
                     blueScale = _blueScale;
                     paletteMode = PaletteModeArg();
                     lookPreset = _lookPreset;
+                    vhsGlitchFrequency = _vhsGlitchFrequency;
+                    vhsQuality = _vhsQuality;
+                    vhsScanlines = _vhsScanlines;
+                    vhsNoise = _vhsNoise;
+                    vhsWobble = _vhsWobble;
                     lowSaveGamma = _lowSaveGamma;
                     lowGrayYellowFix = _lowGrayYellowFix;
                 }
 
+                var displayRgb = IsVhsLook(lookPreset)
+                    ? BuildVhsFrame(frame.Rgb, frame.Width, frame.Height, NextVhsSeed(), vhsGlitchFrequency, vhsQuality, vhsScanlines, vhsNoise, vhsWobble)
+                    : frame.Rgb;
+
                 lock (_displayLock)
                 {
                     display.DrawRgbFrameAdjusted(
-                        frame.Rgb,
+                        displayRgb,
                         frame.Width,
                         frame.Height,
                         0,

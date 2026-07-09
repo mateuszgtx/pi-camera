@@ -839,6 +839,7 @@ async function loadSettings() {
     state = await (await fetch('/api/settings')).json();
 
     fillSelect('captureKind', options.captureKinds);
+    fillSelect('lookPreset', options.lookPresets || ['NORMAL', 'LOW32', 'LOW16', 'RETRO8', 'VHS', 'MONO4']);
     fillSelect('photoSource', options.photoSources);
     fillSelect('photoFormat', options.photoFormats);
     fillSelect('videoFormat', options.videoFormats);
@@ -877,7 +878,7 @@ function put(id, value) {
 }
 
 function sync() {
-    for (const k of ['captureKind', 'photoSource', 'photoFormat', 'videoFormat', 'streamUrl', 'streamOutputFormat', 'streamFps', 'streamBitrateKbps', 'streamJpegQuality', 'streamUseRaw', 'audioEnabled', 'audioInputMode', 'audioInputFormat', 'audioDevice', 'audioSampleRate', 'audioBitrateKbps', 'sensorMode', 'paletteMode', 'photoWidth', 'photoHeight', 'jpgQuality', 'photoEv', 'videoSeconds', 'previewFps', 'randomFrameMinFps', 'randomFrameMaxFps', 'randomFrameSeconds', 'glitchStrength', 'glitchChangeMs', 'glitchPhotoCount', 'selectedColorAmount', 'redScale', 'greenScale', 'blueScale', 'lowSaveGamma', 'lowGrayYellowFix']) put(k, state[k]);
+    for (const k of ['captureKind', 'lookPreset', 'photoSource', 'photoFormat', 'videoFormat', 'streamUrl', 'streamOutputFormat', 'streamFps', 'streamBitrateKbps', 'streamJpegQuality', 'streamUseRaw', 'audioEnabled', 'audioInputMode', 'audioInputFormat', 'audioDevice', 'audioSampleRate', 'audioBitrateKbps', 'sensorMode', 'paletteMode', 'photoWidth', 'photoHeight', 'jpgQuality', 'photoEv', 'videoSeconds', 'previewFps', 'randomFrameMinFps', 'randomFrameMaxFps', 'randomFrameSeconds', 'glitchStrength', 'glitchChangeMs', 'glitchPhotoCount', 'vhsGlitchFrequency', 'vhsQuality', 'vhsScanlines', 'vhsNoise', 'vhsWobble', 'selectedColorAmount', 'redScale', 'greenScale', 'blueScale', 'lowSaveGamma', 'lowGrayYellowFix']) put(k, state[k]);
     const st = $('streamTargetV'); if (st) st.textContent = state.streaming ? 'STREAM ON' : (state.streamTarget || '');
     renderSecurityStatus();
     updateMainAction();

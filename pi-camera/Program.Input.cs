@@ -161,16 +161,17 @@ public static partial class Program
         }
     }
 
-    private static int ModePageCount() => 8;
+    private static int ModePageCount() => 9;
 
     private static int ModeRowCount(int page) => page switch
     {
-        0 => 4,
+        0 => 5,
         1 => 5,
         2 => 5,
         3 => 5,
         4 => 6,
         5 => 6,
+        6 => 6,
         _ => 6
     };
 
@@ -195,14 +196,15 @@ public static partial class Program
         switch (_modePage)
         {
             case 0:
-                if (_modeRow == 0)
+                if (_modeRow == 0) ApplyLookPreset(NextLookPreset(_lookPreset, dir));
+                else if (_modeRow == 1)
                 {
                     _selectedColorAmount = NextColorAmount(_selectedColorAmount, dir);
                     SetPreviewColors(_selectedColorAmount);
                     _manualColorAmount = true;
                 }
-                else if (_modeRow == 1) _paletteMode = NextPaletteMode(_paletteMode, dir);
-                else if (_modeRow == 2) _previewSettings.PreviewPixelSize = NextPixelSize(_previewSettings.PreviewPixelSize, dir);
+                else if (_modeRow == 2) _paletteMode = NextPaletteMode(_paletteMode, dir);
+                else if (_modeRow == 3) _previewSettings.PreviewPixelSize = NextPixelSize(_previewSettings.PreviewPixelSize, dir);
                 break;
             case 1:
                 if (_modeRow == 0) _redScale = ClampRound(_redScale + dir * 0.1, 0.0, 2.0);
@@ -242,13 +244,20 @@ public static partial class Program
                 else if (_modeRow == 4) _glitchRgbEnabled = !_glitchRgbEnabled;
                 break;
             case 6:
+                if (_modeRow == 0) _vhsGlitchFrequency = Math.Clamp(_vhsGlitchFrequency + dir, 0, 10);
+                else if (_modeRow == 1) _vhsQuality = Math.Clamp(_vhsQuality + dir, 0, 10);
+                else if (_modeRow == 2) _vhsScanlines = Math.Clamp(_vhsScanlines + dir, 0, 10);
+                else if (_modeRow == 3) _vhsNoise = Math.Clamp(_vhsNoise + dir, 0, 10);
+                else if (_modeRow == 4) _vhsWobble = Math.Clamp(_vhsWobble + dir, 0, 10);
+                break;
+            case 7:
                 if (_modeRow == 0) _previewSettings.Ev = ClampRound(_previewSettings.Ev + dir * 0.1, -8.0, 8.0);
                 else if (_modeRow == 1) _previewSettings.BlackLevel = Math.Clamp(_previewSettings.BlackLevel + dir * 5, 0, 240);
                 else if (_modeRow == 2) _previewSettings.DarkLevel = ClampRound(_previewSettings.DarkLevel + dir * 0.05, 0.25, 2.0);
                 else if (_modeRow == 3) _previewSettings.PreviewPixelSize = NextPixelSize(_previewSettings.PreviewPixelSize, dir);
                 else if (_modeRow == 4) { _selectedColorAmount = NextColorAmount(_selectedColorAmount, dir); SetPreviewColors(_selectedColorAmount); _manualColorAmount = true; }
                 break;
-            case 7:
+            case 8:
                 if (_modeRow == 0) _previewSettings.Contrast = ClampRound(_previewSettings.Contrast + dir * 0.1, 0.0, 32.0);
                 else if (_modeRow == 1) _previewSettings.Saturation = ClampRound(_previewSettings.Saturation + dir * 0.1, 0.0, 32.0);
                 else if (_modeRow == 2) _previewSettings.Brightness = ClampRound(_previewSettings.Brightness + dir * 0.05, -1.0, 1.0);

@@ -98,6 +98,11 @@ public static partial class Program
                 glitchPixelsEnabled = _glitchPixelsEnabled,
                 glitchRgbEnabled = _glitchRgbEnabled,
                 glitchPhotoCount = _glitchPhotoCount,
+                vhsGlitchFrequency = _vhsGlitchFrequency,
+                vhsQuality = _vhsQuality,
+                vhsScanlines = _vhsScanlines,
+                vhsNoise = _vhsNoise,
+                vhsWobble = _vhsWobble,
                 sensorMode = _sensorMode,
                 selectedColorAmount = _selectedColorAmount,
                 paletteMode = _paletteMode.ToString(),
@@ -160,6 +165,11 @@ public static partial class Program
             _glitchPixelsEnabled = true;
             _glitchRgbEnabled = true;
             _glitchPhotoCount = 4;
+            _vhsGlitchFrequency = 2;
+            _vhsQuality = 6;
+            _vhsScanlines = 6;
+            _vhsNoise = 4;
+            _vhsWobble = 4;
             _manualColorAmount = false;
             _selectedColorAmount = 32;
             _paletteMode = PaletteMode.Green565;

@@ -464,6 +464,7 @@ public static partial class Program
             app.MapGet("/api/settings/options", () => Results.Ok(new
             {
                 captureKinds = new[] { "Photo", "Video", "RandomFrame", "GlitchPhoto", "GlitchVideo", "Stream" },
+                lookPresets = new[] { "NORMAL", "LOW32", "LOW16", "RETRO8", "VHS", "MONO4" },
                 photoSources = new[] { "FullHq", "Preview" },
                 photoFormats = new[] { "jpg", "png", "bmp", "raw", "rawjpg" },
                 videoFormats = new[] { "mjpeg", "mp4" },
@@ -477,6 +478,11 @@ public static partial class Program
                 pixelChoices = _pixelChoices,
                 maxPreviewPixelSize = 2048,
                 glitchPhotoCountChoices = new[] { 1, 2, 3, 4, 5, 6, 8, 10, 12 },
+                vhsGlitchFrequencyChoices = Enumerable.Range(0, 11).ToArray(),
+                vhsQualityChoices = Enumerable.Range(0, 11).ToArray(),
+                vhsScanlinesChoices = Enumerable.Range(0, 11).ToArray(),
+                vhsNoiseChoices = Enumerable.Range(0, 11).ToArray(),
+                vhsWobbleChoices = Enumerable.Range(0, 11).ToArray(),
                 livePreviewPixelMax = _livePreviewPixelMax,
                 previewPixelMaxForCurrentPhotoSource = MaxPixelSizeForCurrentSource(),
                 pixelMeaning = "1 = strong pixel-art / large blocks, max = best quality / smallest blocks"
@@ -603,6 +609,11 @@ public static partial class Program
                 glitchPixelsEnabled = _glitchPixelsEnabled,
                 glitchRgbEnabled = _glitchRgbEnabled,
                 glitchPhotoCount = _glitchPhotoCount,
+                vhsGlitchFrequency = _vhsGlitchFrequency,
+                vhsQuality = _vhsQuality,
+                vhsScanlines = _vhsScanlines,
+                vhsNoise = _vhsNoise,
+                vhsWobble = _vhsWobble,
                 glitchVideoRecording = _glitchVideoRecording,
                 sensorMode = _sensorMode,
                 selectedColorAmount = _selectedColorAmount,
@@ -738,6 +749,21 @@ public static partial class Program
 
             if (TryGetInt(json, "glitchPhotoCount", out var glitchPhotoCount))
                 _glitchPhotoCount = Math.Clamp(glitchPhotoCount, 1, 12);
+
+            if (TryGetInt(json, "vhsGlitchFrequency", out var vhsGlitchFrequency))
+                _vhsGlitchFrequency = Math.Clamp(vhsGlitchFrequency, 0, 10);
+
+            if (TryGetInt(json, "vhsQuality", out var vhsQuality))
+                _vhsQuality = Math.Clamp(vhsQuality, 0, 10);
+
+            if (TryGetInt(json, "vhsScanlines", out var vhsScanlines))
+                _vhsScanlines = Math.Clamp(vhsScanlines, 0, 10);
+
+            if (TryGetInt(json, "vhsNoise", out var vhsNoise))
+                _vhsNoise = Math.Clamp(vhsNoise, 0, 10);
+
+            if (TryGetInt(json, "vhsWobble", out var vhsWobble))
+                _vhsWobble = Math.Clamp(vhsWobble, 0, 10);
 
             if (TryGetString(json, "sensorMode", out var sensorMode))
             {

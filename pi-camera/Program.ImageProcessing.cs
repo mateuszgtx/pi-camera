@@ -162,6 +162,8 @@ public static partial class Program
                 }
             }
         });
+
+        ApplyVhsEffectToImage(image);
     }
 
     private static bool TrySaveCurrentPreviewFrame(string outputPath, string format)
@@ -228,6 +230,8 @@ public static partial class Program
             }
         });
 
+        ApplyVhsEffectToImage(image);
+
         if (format == "png")
             image.SaveAsPng(outputPath);
         else if (format == "bmp")
@@ -289,6 +293,8 @@ public static partial class Program
                 }
             }
         });
+
+        ApplyVhsEffectToImage(image);
 
         if (format == "png")
             image.SaveAsPng(outputPath);
@@ -440,6 +446,8 @@ public static partial class Program
             }
         });
 
+        ApplyVhsEffectToImage(image);
+
         using var ms = new MemoryStream();
         image.SaveAsJpeg(ms, new JpegEncoder { Quality = Math.Clamp(_jpgQuality, 50, 95) });
         return ms.ToArray();
@@ -534,6 +542,8 @@ public static partial class Program
                 }
             }
         });
+
+        ApplyVhsEffectToImage(image);
     }
 
 }

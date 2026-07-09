@@ -226,7 +226,7 @@ public static partial class Program
 
     private static string NextLookPreset(string current, int dir)
     {
-        var values = new[] { "NORMAL", "LOW32", "LOW16", "RETRO8", "MONO4" };
+        var values = new[] { "NORMAL", "LOW32", "LOW16", "RETRO8", "VHS", "MONO4" };
         var i = Array.IndexOf(values, current?.ToUpperInvariant() ?? "LOW32");
         if (i < 0) i = 1;
         return values[(i + dir + values.Length) % values.Length];
@@ -278,6 +278,19 @@ public static partial class Program
                 _previewSettings.Contrast = 0.90;
                 _previewSettings.Saturation = 0.75;
                 break;
+            case "VHS":
+                _sensorMode = "fast";
+                _previewSettings.Ev = -1.3;
+                _previewSettings.BlackLevel = 42;
+                _previewSettings.DarkLevel = 0.86;
+                _previewSettings.PreviewPixelSize = Math.Min(1024, MaxPixelSizeForCurrentSource());
+                _previewSettings.PreviewColorLevels = 64;
+                _previewSettings.Contrast = 0.78;
+                _previewSettings.Saturation = 0.58;
+                _previewSettings.Brightness = -0.03;
+                _previewSettings.Sharpness = 0.0;
+                _previewSettings.Denoise = "cdn_off";
+                break;
             case "MONO4":
                 _sensorMode = "fast";
                 _previewSettings.Ev = -1.6;
@@ -293,6 +306,8 @@ public static partial class Program
                 ApplyLookPreset(_lookPreset);
                 break;
         }
+
+        _selectedColorAmount = ClosestColorChoice(_previewSettings.PreviewColorLevels);
     }
 
 

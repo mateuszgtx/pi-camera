@@ -135,6 +135,12 @@
 
     <div id="look" class="section">
       <div class="card grid">
+        <div class="row"><div class="rowTop"><label>Look preset</label></div><select id="lookPreset" onchange="set('lookPreset',this.value)"></select></div>
+        <div class="row"><div class="rowTop"><label>VHS glitch frequency</label><span class="val" id="vhsGlitchFrequencyV"></span></div><input id="vhsGlitchFrequency" type="range" min="0" max="10" step="1" oninput="setNum('vhsGlitchFrequency',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>VHS quality</label><span class="val" id="vhsQualityV"></span></div><input id="vhsQuality" type="range" min="0" max="10" step="1" oninput="setNum('vhsQuality',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>VHS scanlines / stripes</label><span class="val" id="vhsScanlinesV"></span></div><input id="vhsScanlines" type="range" min="0" max="10" step="1" oninput="setNum('vhsScanlines',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>VHS noise</label><span class="val" id="vhsNoiseV"></span></div><input id="vhsNoise" type="range" min="0" max="10" step="1" oninput="setNum('vhsNoise',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>VHS wobble / tape drift</label><span class="val" id="vhsWobbleV"></span></div><input id="vhsWobble" type="range" min="0" max="10" step="1" oninput="setNum('vhsWobble',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Palette</label></div><select id="paletteMode" onchange="set('paletteMode',this.value)"></select></div>
         <div class="row"><div class="rowTop"><label>Color count</label><span class="val" id="selectedColorAmountV"></span></div><input id="selectedColorAmount" type="range" min="2" max="256" step="1" oninput="setNum('selectedColorAmount',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Pixel / quality</label><span class="val" id="previewPixelSizeV2"></span></div><input id="pixelSizeLook" type="range" min="1" max="2048" step="1" oninput="setPreviewNum('previewPixelSize',this.value)"></div>

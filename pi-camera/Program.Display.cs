@@ -26,9 +26,10 @@ public static partial class Program
         if (_modePage == 0)
         {
             display.DrawTextScaled("COLORS", 8, 42, 0xFFFF, 2);
-            DrawSettingRow(display, 74, width, "COLORS", _selectedColorAmount.ToString(), IsActiveModeRow(0));
-            DrawSettingRow(display, 108, width, "PALETTE", PaletteModeLabel(_paletteMode), IsActiveModeRow(1));
-            DrawSettingRow(display, 142, width, "PIX/QUAL", _previewSettings.PreviewPixelSize + "/" + MaxPixelSizeForCurrentSource(), IsActiveModeRow(2));
+            DrawSettingRow(display, 74, width, "LOOK", _lookPreset, IsActiveModeRow(0));
+            DrawSettingRow(display, 108, width, "COLORS", _selectedColorAmount.ToString(), IsActiveModeRow(1));
+            DrawSettingRow(display, 142, width, "PALETTE", PaletteModeLabel(_paletteMode), IsActiveModeRow(2));
+            DrawSettingRow(display, 176, width, "PIX/QUAL", _previewSettings.PreviewPixelSize + "/" + MaxPixelSizeForCurrentSource(), IsActiveModeRow(3));
         }
         else if (_modePage == 1)
         {
@@ -74,6 +75,15 @@ public static partial class Program
         }
         else if (_modePage == 6)
         {
+            display.DrawTextScaled("VHS", 8, 42, 0xFFFF, 2);
+            DrawSettingRow(display, 74, width, "GLITCH FRQ", _vhsGlitchFrequency + "/10", IsActiveModeRow(0));
+            DrawSettingRow(display, 108, width, "QUALITY", _vhsQuality + "/10", IsActiveModeRow(1));
+            DrawSettingRow(display, 142, width, "STRIPES", _vhsScanlines + "/10", IsActiveModeRow(2));
+            DrawSettingRow(display, 176, width, "NOISE", _vhsNoise + "/10", IsActiveModeRow(3));
+            DrawSettingRow(display, 210, width, "WOBBLE", _vhsWobble + "/10", IsActiveModeRow(4));
+        }
+        else if (_modePage == 7)
+        {
             display.DrawTextScaled("LIVE 1/2", 8, 42, 0xFFFF, 2);
             DrawSettingRow(display, 74, width, "EV", _previewSettings.Ev.ToString("0.0"), IsActiveModeRow(0));
             DrawSettingRow(display, 108, width, "BLACK", _previewSettings.BlackLevel.ToString(), IsActiveModeRow(1));
@@ -108,8 +118,9 @@ public static partial class Program
                     _modePage == 2 ? "NEXT: VIDEO/SENSOR" :
                     _modePage == 3 ? "NEXT: RANDOM" :
                     _modePage == 4 ? "NEXT: GLITCH" :
-                    _modePage == 5 ? "NEXT: LIVE 1/2" :
-                    _modePage == 6 ? "NEXT: LIVE 2/2" :
+                    _modePage == 5 ? "NEXT: VHS" :
+                    _modePage == 6 ? "NEXT: LIVE 1/2" :
+                    _modePage == 7 ? "NEXT: LIVE 2/2" :
                     "BACK: COLORS";
         display.DrawCenteredText(label, y + 12, active ? 0x0000 : 0xFFFF);
     }
