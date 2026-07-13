@@ -130,6 +130,7 @@ public static partial class Program
     private static readonly object _lastPreviewLock = new();
     private static readonly object _settingsLock = new();
     private static readonly object _displayLock = new();
+    private static int _previewDisplayBusy;
     private static byte[]? _lastPreviewRgb;
     private static int _lastPreviewWidth;
     private static int _lastPreviewHeight;
@@ -403,91 +404,112 @@ public static partial class Program
         preview.StatusChanged += msg => Console.WriteLine("[PREVIEW] " + msg);
         preview.FrameReady += frame =>
         {
-            if (_tab != Tab.Preview || _isBusy)
+            if (!_running || _tab != Tab.Preview || _isBusy)
                 return;
 
-            try
+            // Keep the newest frame for captures/API, but do not copy the whole
+            // RGB buffer. PreviewFrame owns this array and never mutates it.
+            _previewReadyForTouch = true;
+            _previewRestartAttempts = 0;
+
+            lock (_lastPreviewLock)
             {
-                _previewReadyForTouch = true;
-                _previewRestartAttempts = 0;
-
-                lock (_lastPreviewLock)
-                {
-                    _lastPreviewRgb = frame.Rgb.ToArray();
-                    _lastPreviewWidth = frame.Width;
-                    _lastPreviewHeight = frame.Height;
-                }
-
-                int blackLevel;
-                double darkLevel;
-                int pixelSize;
-                int colorLevels;
-                double redScale;
-                double greenScale;
-                double blueScale;
-                string paletteMode;
-                string lookPreset;
-                int vhsGlitchFrequency;
-                int vhsQuality;
-                int vhsScanlines;
-                int vhsNoise;
-                int vhsWobble;
-                double lowSaveGamma;
-                int lowGrayYellowFix;
-
-                lock (_settingsLock)
-                {
-                    blackLevel = _previewSettings.BlackLevel;
-                    darkLevel = _previewSettings.DarkLevel;
-                    pixelSize = EffectivePreviewPixelSize(frame.Width);
-                    colorLevels = _previewSettings.PreviewColorLevels;
-                    redScale = _redScale;
-                    greenScale = _greenScale;
-                    blueScale = _blueScale;
-                    paletteMode = PaletteModeArg();
-                    lookPreset = _lookPreset;
-                    vhsGlitchFrequency = _vhsGlitchFrequency;
-                    vhsQuality = _vhsQuality;
-                    vhsScanlines = _vhsScanlines;
-                    vhsNoise = _vhsNoise;
-                    vhsWobble = _vhsWobble;
-                    lowSaveGamma = _lowSaveGamma;
-                    lowGrayYellowFix = _lowGrayYellowFix;
-                }
-
-                var displayRgb = IsVhsLook(lookPreset)
-                    ? BuildVhsFrame(frame.Rgb, frame.Width, frame.Height, NextVhsSeed(), vhsGlitchFrequency, vhsQuality, vhsScanlines, vhsNoise, vhsWobble)
-                    : frame.Rgb;
-
-                lock (_displayLock)
-                {
-                    display.DrawRgbFrameAdjusted(
-                        displayRgb,
-                        frame.Width,
-                        frame.Height,
-                        0,
-                        0,
-                        blackLevel,
-                        darkLevel,
-                        pixelSize,
-                        colorLevels,
-                        redScale,
-                        greenScale,
-                        blueScale,
-                        paletteMode);
-
-                    DrawTopBar(display, width);
-                    DrawTabs(display, width, height);
-                    display.Flush();
-                }
-
-                WritePreviewRecordingFrameIfNeeded(frame.Rgb, frame.Width, frame.Height);
-                WriteStreamFrameIfNeeded(frame.Rgb, frame.Width, frame.Height);
+                _lastPreviewRgb = frame.Rgb;
+                _lastPreviewWidth = frame.Width;
+                _lastPreviewHeight = frame.Height;
             }
-            catch (Exception ex)
+
+            // Never queue display work. If VHS/TFT rendering is still busy,
+            // discard this display frame and accept a fresh one next time.
+            // This trades some FPS for very low latency instead of building a
+            // 2-3 second backlog in the rpicam-vid stdout pipe.
+            if (Interlocked.CompareExchange(ref _previewDisplayBusy, 1, 0) != 0)
+                return;
+
+            _ = Task.Run(() =>
             {
-                Console.WriteLine("[DISPLAY] " + ex.Message);
-            }
+                try
+                {
+                    if (!_running || _tab != Tab.Preview || _isBusy)
+                        return;
+
+                    int blackLevel;
+                    double darkLevel;
+                    int pixelSize;
+                    int colorLevels;
+                    double redScale;
+                    double greenScale;
+                    double blueScale;
+                    string paletteMode;
+                    string lookPreset;
+                    int vhsGlitchFrequency;
+                    int vhsQuality;
+                    int vhsScanlines;
+                    int vhsNoise;
+                    int vhsWobble;
+
+                    lock (_settingsLock)
+                    {
+                        blackLevel = _previewSettings.BlackLevel;
+                        darkLevel = _previewSettings.DarkLevel;
+                        pixelSize = EffectivePreviewPixelSize(frame.Width);
+                        colorLevels = _previewSettings.PreviewColorLevels;
+                        redScale = _redScale;
+                        greenScale = _greenScale;
+                        blueScale = _blueScale;
+                        paletteMode = PaletteModeArg();
+                        lookPreset = _lookPreset;
+                        vhsGlitchFrequency = _vhsGlitchFrequency;
+                        vhsQuality = _vhsQuality;
+                        vhsScanlines = _vhsScanlines;
+                        vhsNoise = _vhsNoise;
+                        vhsWobble = _vhsWobble;
+                    }
+
+                    var displayRgb = IsVhsLook(lookPreset)
+                        ? BuildVhsFrame(frame.Rgb, frame.Width, frame.Height, NextVhsSeed(), vhsGlitchFrequency, vhsQuality, vhsScanlines, vhsNoise, vhsWobble)
+                        : frame.Rgb;
+
+                    lock (_displayLock)
+                    {
+                        if (!_running || _tab != Tab.Preview || _isBusy)
+                            return;
+
+                        display.DrawRgbFrameAdjusted(
+                            displayRgb,
+                            frame.Width,
+                            frame.Height,
+                            0,
+                            0,
+                            blackLevel,
+                            darkLevel,
+                            pixelSize,
+                            colorLevels,
+                            redScale,
+                            greenScale,
+                            blueScale,
+                            paletteMode);
+
+                        DrawTopBar(display, width);
+                        DrawTabs(display, width, height);
+                        display.Flush();
+                    }
+
+                    // Keep recording/stream behavior tied to accepted preview
+                    // frames, as before, so the latency fix does not increase
+                    // CPU usage while recording.
+                    WritePreviewRecordingFrameIfNeeded(frame.Rgb, frame.Width, frame.Height);
+                    WriteStreamFrameIfNeeded(frame.Rgb, frame.Width, frame.Height);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[DISPLAY] " + ex.Message);
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _previewDisplayBusy, 0);
+                }
+            });
         };
 
         display.Clear(0x0000);

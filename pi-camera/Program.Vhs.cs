@@ -61,6 +61,19 @@ public static partial class Program
         var baseWaveA = wobbleLevel * (0.6 + degraded * 2.4);
         var baseWaveB = wobbleLevel * (0.35 + degraded * 1.2);
 
+        // These values depend only on the frame settings, not on individual
+        // pixels. Keeping them outside the inner loop removes millions of
+        // repeated floating-point operations per second on a Raspberry Pi.
+        var noiseRange = (int)Math.Round(4 + noiseLevel * 28 + degraded * 8);
+        var chromaNoiseRange = (int)Math.Round(noiseLevel * 8 + degraded * 3);
+        var redBoost = 1.0 + 0.02 + degraded * 0.05;
+        var greenMul = 1.0 - degraded * 0.07;
+        var blueMul = 1.0 - degraded * 0.18;
+        var blueShift = -2 - degraded * 8;
+        var snowModulo = glitchActive
+            ? Math.Clamp(2200 - noiseAmount * 130, 650, 2200)
+            : noiseAmount <= 0 ? 50000 : Math.Clamp(18000 - noiseAmount * 1400 + quality * 250, 2800, 50000);
+
         for (var y = 0; y < height; y++)
         {
             var wave = Math.Sin((y + seed * 3) * 0.055) * baseWaveA + Math.Sin(y * 0.17 + seed * 0.71) * baseWaveB;
@@ -85,12 +98,14 @@ public static partial class Program
             var dropout = glitchActive && HashNoise(0, y, seed, 360) < dropoutLimit;
             var headSwitching = glitchActive && y >= height - bottomTracking && HashNoise(7, y, seed, 5) == 0;
 
+            var rowOffset = y * width * 3;
+
             for (var x = 0; x < width; x++)
             {
                 var sx = Wrap(x + shift, width);
-                var rIndex = (y * width + Wrap(sx + chromaOffset, width)) * 3;
-                var gIndex = (y * width + sx) * 3;
-                var bIndex = (y * width + Wrap(sx - chromaOffset, width)) * 3;
+                var rIndex = rowOffset + Wrap(sx + chromaOffset, width) * 3;
+                var gIndex = rowOffset + sx * 3;
+                var bIndex = rowOffset + Wrap(sx - chromaOffset, width) * 3;
 
                 var r = rgb[rIndex];
                 var g = rgb[gIndex + 1];
@@ -98,20 +113,13 @@ public static partial class Program
 
                 // Lekki poziomy smear jak composite. Przy wysokiej jakości jest subtelny.
                 var sx2 = Wrap(sx - 1, width);
-                var i2 = (y * width + sx2) * 3;
+                var i2 = rowOffset + sx2 * 3;
                 r = (byte)((r * smearWeight + rgb[i2]) / (smearWeight + 1));
                 g = (byte)((g * smearWeight + rgb[i2 + 1]) / (smearWeight + 1));
                 b = (byte)((b * smearWeight + rgb[i2 + 2]) / (smearWeight + 1));
 
-                var noiseRange = (int)Math.Round(4 + noiseLevel * 28 + degraded * 8);
                 var noise = noiseAmount <= 0 ? 0 : HashNoise(x, y, seed, noiseRange * 2 + 1) - noiseRange;
-                var chromaNoiseRange = (int)Math.Round(noiseLevel * 8 + degraded * 3);
                 var chromaNoise = chromaNoiseRange <= 0 ? 0 : HashNoise(x / 2, y, seed + 97, chromaNoiseRange * 2 + 1) - chromaNoiseRange;
-
-                var redBoost = 1.0 + 0.02 + degraded * 0.05;
-                var greenMul = 1.0 - degraded * 0.07;
-                var blueMul = 1.0 - degraded * 0.18;
-                var blueShift = -2 - degraded * 8;
 
                 var rr = ClampByte((int)Math.Round((r * redBoost + 3 + noise) * scanline));
                 var gg = ClampByte((int)Math.Round((g * greenMul + noise * 0.35) * scanline));
@@ -131,9 +139,6 @@ public static partial class Program
                 }
 
                 // Sporadyczne czarne/śnieżne kropeczki. Osobny suwak noise kontroluje ilość.
-                var snowModulo = glitchActive
-                    ? Math.Clamp(2200 - noiseAmount * 130, 650, 2200)
-                    : noiseAmount <= 0 ? 50000 : Math.Clamp(18000 - noiseAmount * 1400 + quality * 250, 2800, 50000);
                 var snow = HashNoise(x, y, seed + 409, snowModulo);
                 if (snow == 0)
                 {
@@ -144,7 +149,7 @@ public static partial class Program
                     rr = gg = bb = 0;
                 }
 
-                var o = (y * width + x) * 3;
+                var o = rowOffset + x * 3;
                 output[o] = (byte)rr;
                 output[o + 1] = (byte)gg;
                 output[o + 2] = (byte)bb;
