@@ -164,9 +164,26 @@ public static partial class Program
                     var password = root.TryGetProperty("password", out var passEl) ? passEl.GetString() ?? "" : "";
                     var connectNow = !root.TryGetProperty("connectNow", out var connectEl) || connectEl.ValueKind != JsonValueKind.False;
 
-                    await AddOrConnectWifiAsync(ssid, password, connectNow);
-                    SetNetworkStatus("WiFi OK: " + ssid);
+                    // Save the NetworkManager profile first. Creating a profile does not
+                    // require scanning and therefore works while wlan0 is still a hotspot.
+                    var connectionName = await AddOrConnectWifiAsync(ssid, password, connectNow: false);
 
+                    if (connectNow)
+                    {
+                        if (!QueueWifiConnection(connectionName, ssid))
+                            return Results.Conflict(new { ok = false, message = "Another WiFi connection attempt is already running" });
+
+                        // Do not call CurrentNetworkStatus() here: that would delay the
+                        // response and the phone could lose the hotspot before receiving it.
+                        return Results.Json(new
+                        {
+                            ok = true,
+                            message = "WiFi saved. Hotspot will close and connection will start.",
+                            switching = true
+                        }, statusCode: StatusCodes.Status202Accepted);
+                    }
+
+                    SetNetworkStatus("WiFi saved: " + ssid);
                     return Results.Ok(new { ok = true, message = "WiFi saved", network = CurrentNetworkStatus() });
                 }
                 catch (Exception ex)
@@ -185,9 +202,15 @@ public static partial class Program
                     if (string.IsNullOrWhiteSpace(name))
                         return Results.BadRequest(new { ok = false, message = "Empty network name" });
 
-                    await ConnectSavedWifiAsync(name);
-                    SetNetworkStatus("Connected: " + name);
-                    return Results.Ok(new { ok = true, network = CurrentNetworkStatus() });
+                    if (!QueueWifiConnection(name))
+                        return Results.Conflict(new { ok = false, message = "Another WiFi connection attempt is already running" });
+
+                    return Results.Json(new
+                    {
+                        ok = true,
+                        message = "Hotspot will close and WiFi connection will start.",
+                        switching = true
+                    }, statusCode: StatusCodes.Status202Accepted);
                 }
                 catch (Exception ex)
                 {

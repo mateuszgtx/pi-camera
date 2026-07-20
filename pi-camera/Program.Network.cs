@@ -334,16 +334,122 @@ public static partial class Program
         }, 15000);
     }
 
-    private static async Task ConnectSavedWifiAsync(string connectionName)
+    private static int _wifiConnectionTaskActive;
+
+    private static async Task ConnectSavedWifiAsync(string connectionName, string? expectedSsid = null)
     {
-        await RunProcessAsync("nmcli", new List<string> { "connection", "up", "id", connectionName }, 15000);
+        var hotspotWasActive = false;
+        try { hotspotWasActive = IsHotspotActive(); } catch { }
+
+        if (!IsWifiRadioOn())
+            await SetWifiRadioAsync(true);
+
+        try
+        {
+            // Disable automatic retries during the hand-over. On failure this prevents
+            // NetworkManager from repeatedly taking wlan0 away from the restored hotspot.
+            try
+            {
+                await RunProcessAsync("nmcli", new List<string>
+                {
+                    "connection", "modify", connectionName, "connection.autoconnect", "no"
+                }, 5000);
+            }
+            catch { }
+
+            // wlan0 cannot reliably scan for client networks while it is running the hotspot.
+            if (hotspotWasActive)
+            {
+                SetNetworkStatus("Stopping hotspot...");
+                await SetHotspotAsync(false);
+                await Task.Delay(700);
+            }
+
+            // Force an actual scan after wlan0 has left AP mode. A failed rescan is not
+            // fatal because `connection up` performs its own activation/scan as well.
+            if (!string.IsNullOrWhiteSpace(expectedSsid))
+            {
+                SetNetworkStatus("Scanning WiFi: " + expectedSsid);
+                try
+                {
+                    await RunProcessAsync("nmcli", new List<string>
+                    {
+                        "device", "wifi", "rescan", "ifname", "wlan0", "ssid", expectedSsid
+                    }, 12000);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[WIFI RESCAN] " + ex.Message);
+                }
+            }
+
+            SetNetworkStatus("Connecting: " + connectionName);
+            await RunProcessAsync("nmcli", new List<string>
+            {
+                "connection", "up", "id", connectionName, "ifname", "wlan0"
+            }, 30000);
+
+            // Only enable autoconnect after a confirmed successful activation.
+            await RunProcessAsync("nmcli", new List<string>
+            {
+                "connection", "modify", connectionName, "connection.autoconnect", "yes"
+            }, 5000);
+        }
+        catch
+        {
+            // If switching away from the setup hotspot failed, restore it so the phone
+            // can reconnect and the user can correct the SSID/password.
+            if (hotspotWasActive)
+            {
+                try
+                {
+                    SetNetworkStatus("WiFi failed - restoring hotspot");
+                    await SetHotspotAsync(true);
+                }
+                catch (Exception restoreEx)
+                {
+                    Console.WriteLine("[WIFI HOTSPOT RESTORE] " + restoreEx);
+                }
+            }
+
+            throw;
+        }
     }
 
+    private static bool QueueWifiConnection(string connectionName, string? expectedSsid = null)
+    {
+        if (Interlocked.CompareExchange(ref _wifiConnectionTaskActive, 1, 0) != 0)
+            return false;
 
-    private static async Task AddOrConnectWifiAsync(string ssid, string password, bool connectNow)
+        SetNetworkStatus("WiFi switch queued: " + connectionName);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // Give the HTTP response enough time to reach the phone before the
+                // hotspot disappears.
+                await Task.Delay(1500);
+                await ConnectSavedWifiAsync(connectionName, expectedSsid);
+                SetNetworkStatus("Connected: " + connectionName);
+            }
+            catch (Exception ex)
+            {
+                SetNetworkStatus("WiFi error: " + ShortError(ex.Message));
+                Console.WriteLine("[WIFI CONNECT BACKGROUND] " + ex);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _wifiConnectionTaskActive, 0);
+                EnsureWifiConnectionsLoaded(force: true);
+            }
+        });
+
+        return true;
+    }
+
+    private static async Task<string> AddOrConnectWifiAsync(string ssid, string password, bool connectNow)
     {
         ssid = ssid.Trim();
-        password = password.Trim();
 
         if (string.IsNullOrWhiteSpace(ssid))
             throw new ArgumentException("SSID is empty");
@@ -360,33 +466,43 @@ public static partial class Program
                 .Select(x => UnescapeNmcliValue(x).Trim())
                 .Any(x => x.Equals(connectionName, StringComparison.OrdinalIgnoreCase));
 
-            if (existing)
+            if (!existing)
             {
-                if (!string.IsNullOrEmpty(password))
+                // Create a profile without requiring the network to be visible. This is
+                // essential while wlan0 is still serving the setup hotspot.
+                await RunProcessAsync("nmcli", new List<string>
                 {
-                    await RunProcessAsync("nmcli", new List<string> { "connection", "modify", connectionName, "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password }, 8000);
-                }
-
-                if (connectNow)
-                    await ConnectSavedWifiAsync(connectionName);
-            }
-            else
-            {
-                var args = new List<string>
-                {
-                    "device", "wifi", "connect", ssid,
+                    "connection", "add",
+                    "type", "wifi",
                     "ifname", "wlan0",
-                    "name", connectionName
-                };
-
-                if (!string.IsNullOrEmpty(password))
-                {
-                    args.Add("password");
-                    args.Add(password);
-                }
-
-                await RunProcessAsync("nmcli", args, 25000);
+                    "con-name", connectionName,
+                    "ssid", ssid
+                }, 10000);
             }
+
+            await RunProcessAsync("nmcli", new List<string>
+            {
+                "connection", "modify", connectionName,
+                "802-11-wireless.mode", "infrastructure",
+                "802-11-wireless.ssid", ssid,
+                "connection.autoconnect", "no",
+                "ipv4.method", "auto"
+            }, 10000);
+
+            if (!string.IsNullOrEmpty(password))
+            {
+                await RunProcessAsync("nmcli", new List<string>
+                {
+                    "connection", "modify", connectionName,
+                    "wifi-sec.key-mgmt", "wpa-psk",
+                    "wifi-sec.psk", password
+                }, 10000);
+            }
+
+            if (connectNow)
+                await ConnectSavedWifiAsync(connectionName, ssid);
+
+            return connectionName;
         }
         finally
         {

@@ -383,14 +383,16 @@ async function loadNetwork() {
 
 async function saveWifiNetwork(connectNow) {
     const ssid = ($('wifiSsid')?.value || '').trim();
-    const password = ($('wifiPassword')?.value || '').trim();
+    const password = $('wifiPassword')?.value || '';
     if (!ssid) { toast('Enter SSID'); return; }
     toast(connectNow ? 'Connecting WiFi...' : 'Saving WiFi...');
     try {
         const r = await fetch('/api/network/wifi', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ssid, password, connectNow }) });
         const data = await r.json();
-        toast(data.ok ? 'WiFi saved' : (data.message || 'WiFi error'));
-        loadNetwork();
+        toast(data.message || (data.ok ? 'WiFi saved' : 'WiFi error'));
+        // When connecting now, the hotspot is intentionally about to disappear.
+        // A refresh here would race with that switch and show a false API error.
+        if (!connectNow && data.ok) loadNetwork();
     } catch (e) { toast('WiFi error') }
 }
 
@@ -399,8 +401,8 @@ async function connectWifi(name) {
     try {
         const r = await fetch('/api/network/wifi/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
         const data = await r.json();
-        toast(data.ok ? 'WiFi connected' : (data.message || 'WiFi error'));
-        loadNetwork();
+        toast(data.message || (data.ok ? 'WiFi connection started' : 'WiFi error'));
+        // Do not refresh: switching from hotspot to WiFi deliberately breaks this page's connection.
     } catch (e) { toast('WiFi error') }
 }
 
