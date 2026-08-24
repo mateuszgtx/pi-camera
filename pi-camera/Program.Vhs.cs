@@ -201,6 +201,56 @@ public static partial class Program
     }
 
 
+    private static void ApplyVhsEffectToImage(Image<Rgb24> image, HqProcessingSnapshot snapshot)
+    {
+        if (!IsVhsLook(snapshot.LookPreset))
+            return;
+
+        var source = new byte[image.Width * image.Height * 3];
+
+        image.ProcessPixelRows(accessor =>
+        {
+            for (var y = 0; y < image.Height; y++)
+            {
+                var row = accessor.GetRowSpan(y);
+                var offset = y * image.Width * 3;
+
+                for (var x = 0; x < image.Width; x++)
+                {
+                    source[offset + x * 3] = row[x].R;
+                    source[offset + x * 3 + 1] = row[x].G;
+                    source[offset + x * 3 + 2] = row[x].B;
+                }
+            }
+        });
+
+        var vhs = BuildVhsFrame(
+            source,
+            image.Width,
+            image.Height,
+            NextVhsSeed(),
+            snapshot.VhsGlitchFrequency,
+            snapshot.VhsQuality,
+            snapshot.VhsScanlines,
+            snapshot.VhsNoise,
+            snapshot.VhsWobble);
+
+        image.ProcessPixelRows(accessor =>
+        {
+            for (var y = 0; y < image.Height; y++)
+            {
+                var row = accessor.GetRowSpan(y);
+                var offset = y * image.Width * 3;
+
+                for (var x = 0; x < image.Width; x++)
+                {
+                    var i = offset + x * 3;
+                    row[x] = new Rgb24(vhs[i], vhs[i + 1], vhs[i + 2]);
+                }
+            }
+        });
+    }
+
     private static bool IsVhsGlitchFrame(int seed, int frequency)
     {
         frequency = Math.Clamp(frequency, 0, 10);

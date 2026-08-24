@@ -44,6 +44,7 @@ public static partial class Program
                 ok = true,
                 running = _running,
                 busy = _isBusy,
+                hqProcessingPending = Volatile.Read(ref _hqProcessingPending),
                 recording = _previewRecording,
                 randomRecording = _previewRandomRecording,
                 streaming = _streaming,
@@ -219,25 +220,61 @@ public static partial class Program
                 }
             });
 
-            app.MapGet("/api/photos", () =>
+            app.MapGet("/api/photos", (int? offset, int? limit) =>
             {
                 Directory.CreateDirectory(outputDir);
 
-                var files = Directory.GetFiles(outputDir)
+                // Keep the old response shape when pagination is not requested so
+                // existing API clients continue to work. The web gallery always uses
+                // offset + limit and receives only one small page at a time.
+                var paginationRequested = offset.HasValue || limit.HasValue;
+                var safeOffset = Math.Max(0, offset ?? 0);
+                var safeLimit = Math.Clamp(limit ?? 24, 1, 60);
+
+                var orderedFiles = Directory.EnumerateFiles(outputDir)
                     .Where(IsMediaFile)
-                    .OrderByDescending(File.GetCreationTime)
-                    .Select(path => new
+                    .Select(path => new FileInfo(path))
+                    .OrderByDescending(file => file.CreationTimeUtc);
+
+                object ToGalleryItem(FileInfo file)
+                {
+                    var path = file.FullName;
+                    var name = file.Name;
+                    return new
                     {
-                        name = Path.GetFileName(path),
-                        size = new FileInfo(path).Length,
-                        created = File.GetCreationTime(path),
+                        name,
+                        size = file.Length,
+                        created = file.CreationTime,
                         kind = IsVideoFile(path) ? "video" : IsRawPhotoFile(path) ? "raw" : "image",
-                        url = "/api/photos/" + Uri.EscapeDataString(Path.GetFileName(path)),
-                        previewUrl = IsPhotoFile(path) ? "/api/photos/" + Uri.EscapeDataString(Path.GetFileName(path)) + "/preview.jpg" : null
-                    })
+                        url = "/api/photos/" + Uri.EscapeDataString(name),
+                        previewUrl = IsPhotoFile(path) ? "/api/photos/" + Uri.EscapeDataString(name) + "/preview.jpg" : null,
+                        thumbUrl = IsPhotoFile(path) ? "/api/photos/" + Uri.EscapeDataString(name) + "/thumb.jpg" : null
+                    };
+                }
+
+                if (!paginationRequested)
+                    return Results.Ok(orderedFiles.Select(ToGalleryItem).ToList());
+
+                // Read one extra item only to determine whether another page exists.
+                // This avoids sending metadata for the entire gallery to the browser.
+                var page = orderedFiles
+                    .Skip(safeOffset)
+                    .Take(safeLimit + 1)
+                    .Select(ToGalleryItem)
                     .ToList();
 
-                return Results.Ok(files);
+                var hasMore = page.Count > safeLimit;
+                if (hasMore)
+                    page.RemoveAt(page.Count - 1);
+
+                return Results.Ok(new
+                {
+                    items = page,
+                    offset = safeOffset,
+                    limit = safeLimit,
+                    nextOffset = safeOffset + page.Count,
+                    hasMore
+                });
             });
 
             app.MapGet("/api/photos/{file}", (string file) =>
@@ -279,6 +316,38 @@ public static partial class Program
                 return Results.File(previewPath, "image/jpeg", enableRangeProcessing: true);
             });
 
+            app.MapGet("/api/photos/{file}/thumb.jpg", async (string file) =>
+            {
+                var safeName = Path.GetFileName(Uri.UnescapeDataString(file));
+                var path = Path.Combine(outputDir, safeName);
+
+                if (!File.Exists(path) || !IsPhotoFile(path))
+                    return Results.NotFound();
+
+                var thumbPath = GalleryThumbPathFor(path);
+                string sourcePath;
+
+                if (IsRawPhotoFile(path))
+                {
+                    var previewPath = GalleryPreviewPathFor(path);
+                    if (File.Exists(previewPath))
+                        sourcePath = previewPath;
+                    else if (TryFindRawCompanionImage(path, out var companionPath))
+                        sourcePath = companionPath;
+                    else
+                        return Results.NotFound(new { ok = false, message = "No thumbnail is available for this RAW/DNG file." });
+                }
+                else
+                {
+                    sourcePath = path;
+                }
+
+                if (!File.Exists(thumbPath) || File.GetLastWriteTimeUtc(thumbPath) < File.GetLastWriteTimeUtc(sourcePath))
+                    await ImageLoader.SaveJpegPreviewAsync(sourcePath, thumbPath, 420, Math.Clamp(_jpgQuality, 65, 85));
+
+                return Results.File(thumbPath, "image/jpeg", enableRangeProcessing: true);
+            });
+
             app.MapDelete("/api/photos/{file}", (string file) =>
             {
                 var safeName = Path.GetFileName(Uri.UnescapeDataString(file));
@@ -289,6 +358,7 @@ public static partial class Program
 
                 File.Delete(path);
                 TryDelete(GalleryPreviewPathFor(path));
+                TryDelete(GalleryThumbPathFor(path));
                 return Results.Ok(new { ok = true });
             });
 

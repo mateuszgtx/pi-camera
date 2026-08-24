@@ -85,7 +85,10 @@ public sealed class CameraPreviewService : IDisposable
             _cts?.Cancel();
 
             if (_process is not null && !_process.HasExited)
+            {
                 _process.Kill(entireProcessTree: true);
+                try { _process.WaitForExit(400); } catch { }
+            }
         }
         catch { }
         finally

@@ -5,6 +5,13 @@ let audioListenAbort = null, audioListenContext = null, audioListenProcessor = n
 let audioListenQueue = [], audioListenQueuedSamples = 0, audioListenSampleRate = 48000;
 let authStatus = { enabled: false, authenticated: true };
 
+const GALLERY_PAGE_SIZE = 24;
+const GALLERY_THUMB_CONCURRENCY = 2;
+let galleryOffset = 0, galleryHasMore = true, galleryLoading = false, galleryGeneration = 0;
+let gallerySeen = new Set();
+let galleryMoreObserver = null, galleryThumbObserver = null;
+let galleryThumbQueue = [], galleryThumbActive = 0;
+
 const rawFetch = window.fetch.bind(window);
 window.fetch = async (...args) => {
     const response = await rawFetch(...args);
@@ -85,7 +92,6 @@ async function loginWeb() {
 
     try {
         await loadSettings();
-        loadPhotos();
         previewMode(currentMode);
     } catch (e) {
         console.warn('Post-login refresh failed', e);
@@ -326,30 +332,166 @@ function sizeText(n) {
     return n + ' B';
 }
 
+function galleryScrollRoot() {
+    return $('photos')?.querySelector('.drawerBody') || null;
+}
+
+function gallerySentinelState(text = '', loading = false, hidden = false) {
+    const sentinel = $('photosSentinel');
+    if (!sentinel) return;
+    sentinel.textContent = text;
+    sentinel.classList.toggle('loading', loading);
+    sentinel.classList.toggle('hidden', hidden);
+}
+
+function pumpGalleryThumbQueue() {
+    while (galleryThumbActive < GALLERY_THUMB_CONCURRENCY && galleryThumbQueue.length) {
+        const img = galleryThumbQueue.shift();
+        if (!img?.isConnected || !img.dataset.src) continue;
+
+        const src = img.dataset.src;
+        delete img.dataset.src;
+        galleryThumbActive++;
+
+        const done = ok => {
+            img.onload = null;
+            img.onerror = null;
+            galleryThumbActive = Math.max(0, galleryThumbActive - 1);
+            if (!ok && img.isConnected) {
+                const fallback = esc(img.dataset.fallback || '📷');
+                const button = img.closest('.thumbBtn');
+                if (button) button.innerHTML = `<div class="fileIcon">${fallback}</div>`;
+            }
+            pumpGalleryThumbQueue();
+        };
+
+        img.onload = () => done(true);
+        img.onerror = () => done(false);
+        img.src = src;
+    }
+}
+
+function queueGalleryThumb(img) {
+    if (!img?.dataset.src || img.dataset.queued === '1') return;
+    img.dataset.queued = '1';
+    galleryThumbQueue.push(img);
+    pumpGalleryThumbQueue();
+}
+
+function ensureGalleryObservers() {
+    const root = galleryScrollRoot();
+
+    galleryThumbObserver?.disconnect();
+    galleryThumbObserver = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            galleryThumbObserver.unobserve(entry.target);
+            queueGalleryThumb(entry.target);
+        }
+    }, { root, rootMargin: '240px 0px' });
+
+    galleryMoreObserver?.disconnect();
+    galleryMoreObserver = new IntersectionObserver(entries => {
+        if (entries.some(entry => entry.isIntersecting)) loadMorePhotos();
+    }, { root, rootMargin: '120px 0px' });
+
+    const sentinel = $('photosSentinel');
+    if (sentinel) galleryMoreObserver.observe(sentinel);
+}
+
+function observeGalleryThumbs(scope) {
+    if (!galleryThumbObserver) ensureGalleryObservers();
+    scope.querySelectorAll('img.thumb[data-src]').forEach(img => galleryThumbObserver.observe(img));
+}
+
+function renderPhotoCard(p) {
+    const name = esc(p.name);
+    const encodedName = encodeURIComponent(p.name);
+    const isPhoto = p.kind === 'image' || p.kind === 'raw' || /\.(jpg|jpeg|png|bmp|dng|raw)$/i.test(p.name);
+    const isRaw = p.kind === 'raw' || /\.(dng|raw)$/i.test(p.name);
+    const previewUrl = p.previewUrl || (/\.(jpg|jpeg|png|bmp)$/i.test(p.name) ? p.url : '');
+    const thumbUrl = p.thumbUrl || previewUrl;
+    const rawFallback = isRaw ? 'RAW' : '📷';
+    const preview = isPhoto && thumbUrl
+        ? `<button class="thumbBtn" data-full="${esc(previewUrl || thumbUrl)}" onclick="openLightbox(this.dataset.full)"><img class="thumb" data-src="${esc(thumbUrl)}" data-fallback="${rawFallback}" alt="${name}"></button>`
+        : `<a class="thumbBtn" href="${esc(p.url)}" target="_blank"><div class="fileIcon">${isPhoto ? rawFallback : '🎬'}</div></a>`;
+
+    return `<div class="photo" data-gallery-name="${name}">${preview}<div class="photoInfo"><div class="photoName" title="${name}">${name}</div><div class="meta">${esc(p.kind || 'file')} • ${sizeText(p.size)}</div><div class="photoActions"><button class="ghost" data-url="${esc(p.url)}" onclick="window.open(this.dataset.url,'_blank')">Open</button><button class="danger" data-name="${encodedName}" onclick="delPhoto(this.dataset.name)">Delete</button></div></div></div>`;
+}
+
 async function loadPhotos() {
     const box = $('photosList');
+    galleryGeneration++;
+    galleryOffset = 0;
+    galleryHasMore = true;
+    galleryLoading = false;
+    gallerySeen = new Set();
+    galleryThumbQueue = [];
+
     box.className = '';
     box.innerHTML = '<div class="mini">Loading...</div>';
+    gallerySentinelState('', false, true);
+    ensureGalleryObservers();
+
+    await loadMorePhotos(galleryGeneration, true);
+}
+
+async function loadMorePhotos(generation = galleryGeneration, firstPage = false) {
+    if (galleryLoading || !galleryHasMore) return;
+    galleryLoading = true;
+    gallerySentinelState('Loading more...', true, firstPage);
+
     try {
-        const r = await fetch('/api/photos?ts=' + Date.now());
-        const list = await r.json();
-        if (!list.length) { box.className = ''; box.innerHTML = '<div class="mini">No photos or videos.</div>'; return }
-        box.className = 'photosGrid';
-        box.innerHTML = list.map(p => {
-            const name = esc(p.name);
-            const enc = encodeURIComponent(p.name);
-            const isPhoto = p.kind === 'image' || p.kind === 'raw' || /\.(jpg|jpeg|png|bmp|dng|raw)$/i.test(p.name);
-            const isRaw = p.kind === 'raw' || /\.(dng|raw)$/i.test(p.name);
-            const previewUrl = p.previewUrl || (/\.(jpg|jpeg|png|bmp)$/i.test(p.name) ? p.url : '');
-            const rawFallback = isRaw ? 'RAW' : '📷';
-            const preview = isPhoto && previewUrl
-                ? `<button class="thumbBtn" onclick="openLightbox('${previewUrl}')"><img class="thumb" src="${previewUrl}" loading="lazy" onerror="this.closest('button').innerHTML='<div class=&quot;fileIcon&quot;>${rawFallback}</div>'"></button>`
-                : `<a class="thumbBtn" href="${p.url}" target="_blank"><div class="fileIcon">${isPhoto ? rawFallback : '🎬'}</div></a>`;
-            return `<div class="photo">${preview}<div class="photoInfo"><div class="photoName" title="${name}">${name}</div><div class="meta">${esc(p.kind || 'file')} • ${sizeText(p.size)}</div><div class="photoActions"><button class="ghost" onclick="window.open('${p.url}','_blank')">Open</button><button class="danger" onclick="delPhoto('${enc}')">Delete</button></div></div></div>`;
-        }).join('');
+        const r = await fetch(`/api/photos?offset=${galleryOffset}&limit=${GALLERY_PAGE_SIZE}&ts=${Date.now()}`);
+        if (!r.ok) throw new Error('Gallery request failed');
+        const data = await r.json();
+        if (generation !== galleryGeneration) return;
+
+        const items = Array.isArray(data) ? data : (data.items || []);
+        const fresh = items.filter(p => {
+            if (!p?.name || gallerySeen.has(p.name)) return false;
+            gallerySeen.add(p.name);
+            return true;
+        });
+
+        const box = $('photosList');
+        if (firstPage) {
+            box.innerHTML = '';
+            box.className = 'photosGrid';
+        }
+
+        if (fresh.length) {
+            const holder = document.createElement('div');
+            holder.innerHTML = fresh.map(renderPhotoCard).join('');
+            const nodes = Array.from(holder.children);
+            nodes.forEach(node => box.appendChild(node));
+            nodes.forEach(node => observeGalleryThumbs(node));
+        }
+
+        galleryOffset = Array.isArray(data)
+            ? galleryOffset + items.length
+            : Number(data.nextOffset ?? (galleryOffset + items.length));
+        galleryHasMore = Array.isArray(data) ? false : !!data.hasMore;
+
+        if (!gallerySeen.size) {
+            box.className = '';
+            box.innerHTML = '<div class="mini">No photos or videos.</div>';
+            gallerySentinelState('', false, true);
+        } else if (galleryHasMore) {
+            gallerySentinelState('Scroll for more', false, false);
+        } else {
+            gallerySentinelState(`Loaded ${gallerySeen.size} files`, false, false);
+        }
     } catch (e) {
-        box.className = '';
-        box.innerHTML = '<div class="mini">Could not load the gallery.</div>';
+        if (generation !== galleryGeneration) return;
+        if (!gallerySeen.size) {
+            const box = $('photosList');
+            box.className = '';
+            box.innerHTML = '<div class="mini">Could not load the gallery.</div>';
+        }
+        gallerySentinelState('Could not load more. Scroll or refresh to retry.', false, false);
+    } finally {
+        if (generation === galleryGeneration) galleryLoading = false;
     }
 }
 
@@ -966,7 +1108,6 @@ async function init() {
     if (ok) {
         previewMode('raw');
         await loadSettings();
-        loadPhotos();
     }
 }
 

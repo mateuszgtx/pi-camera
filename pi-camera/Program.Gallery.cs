@@ -1,14 +1,17 @@
-﻿using pi_camera.Services;
+using pi_camera.Services;
 
 namespace pi_camera;
 
 public static partial class Program
 {
     private const string GalleryPreviewSuffix = ".preview.jpg";
+    private const string GalleryThumbSuffix = ".thumb.jpg";
 
-    private static bool IsGalleryPreviewFile(string path)
+    private static bool IsGalleryGeneratedFile(string path)
     {
-        return Path.GetFileName(path).EndsWith(GalleryPreviewSuffix, StringComparison.OrdinalIgnoreCase);
+        var name = Path.GetFileName(path);
+        return name.EndsWith(GalleryPreviewSuffix, StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(GalleryThumbSuffix, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GalleryPreviewPathFor(string mediaPath)
@@ -16,9 +19,14 @@ public static partial class Program
         return mediaPath + GalleryPreviewSuffix;
     }
 
+    private static string GalleryThumbPathFor(string mediaPath)
+    {
+        return mediaPath + GalleryThumbSuffix;
+    }
+
     private static bool IsPhotoFile(string path)
     {
-        if (IsGalleryPreviewFile(path))
+        if (IsGalleryGeneratedFile(path))
             return false;
 
         var ext = Path.GetExtension(path).ToLowerInvariant();
@@ -39,7 +47,7 @@ public static partial class Program
 
     private static bool IsMediaFile(string path)
     {
-        return !IsGalleryPreviewFile(path) && (IsPhotoFile(path) || IsVideoFile(path));
+        return !IsGalleryGeneratedFile(path) && (IsPhotoFile(path) || IsVideoFile(path));
     }
 
     private static string ContentTypeFor(string path)
@@ -65,7 +73,7 @@ public static partial class Program
         foreach (var ext in new[] { ".jpg", ".jpeg", ".png", ".bmp" })
         {
             var candidate = Path.Combine(dir, stem + ext);
-            if (File.Exists(candidate) && !IsGalleryPreviewFile(candidate))
+            if (File.Exists(candidate) && !IsGalleryGeneratedFile(candidate))
             {
                 companionPath = candidate;
                 return true;

@@ -166,6 +166,140 @@ public static partial class Program
         ApplyVhsEffectToImage(image);
     }
 
+    private static void ApplyFullPhotoLook(Image<Rgb24> image, HqProcessingSnapshot snapshot)
+    {
+        var block = Math.Clamp(snapshot.PixelBlockSize, 1, Math.Max(image.Width, image.Height));
+        var colors = snapshot.ColorLevels;
+        var black = snapshot.BlackLevel;
+        var dark = snapshot.DarkLevel;
+        var denom = Math.Max(1, 255 - black);
+
+        image.ProcessPixelRows(accessor =>
+        {
+            for (var y = 0; y < image.Height; y += block)
+            {
+                for (var x = 0; x < image.Width; x += block)
+                {
+                    var sampleX = Math.Min(image.Width - 1, x + block / 2);
+                    var sampleY = Math.Min(image.Height - 1, y + block / 2);
+                    var sample = accessor.GetRowSpan(sampleY)[sampleX];
+
+                    var r0 = ApplyBlackDarkSaved(sample.R, black, denom, dark);
+                    var g0 = ApplyBlackDarkSaved(sample.G, black, denom, dark);
+                    var b0 = ApplyBlackDarkSaved(sample.B, black, denom, dark);
+
+                    r0 = Math.Clamp((int)Math.Round(r0 * snapshot.RedScale), 0, 255);
+                    g0 = Math.Clamp((int)Math.Round(g0 * snapshot.GreenScale), 0, 255);
+                    b0 = Math.Clamp((int)Math.Round(b0 * snapshot.BlueScale), 0, 255);
+
+                    var (r, g, b) = QuantizeSavedPalette(r0, g0, b0, colors, snapshot.PaletteMode);
+
+                    if (string.Equals(snapshot.LookPreset, "LOW32", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(snapshot.LookPreset, "LOW16", StringComparison.OrdinalIgnoreCase))
+                    {
+                        r = ApplyGamma(r, snapshot.LowSaveGamma);
+                        g = ApplyGamma(g, snapshot.LowSaveGamma);
+                        b = ApplyGamma(b, snapshot.LowSaveGamma);
+
+                        var max = Math.Max(r, Math.Max(g, b));
+                        var min = Math.Min(r, Math.Min(g, b));
+
+                        if (max - min < 42)
+                        {
+                            var avg = (r + g + b) / 3;
+                            r = Math.Clamp((r + avg) / 2, 0, 255);
+                            g = Math.Clamp(((g + avg) / 2) - snapshot.LowGrayYellowFix / 3, 0, 255);
+                            b = Math.Clamp(((b + avg) / 2) + snapshot.LowGrayYellowFix, 0, 255);
+                        }
+                    }
+
+                    if (snapshot.Saturation <= 0.01)
+                    {
+                        var gray = Math.Clamp((r * 30 + g * 59 + b * 11) / 100, 0, 255);
+                        r = gray;
+                        g = gray;
+                        b = gray;
+                    }
+
+                    var color = new Rgb24((byte)r, (byte)g, (byte)b);
+                    var maxY = Math.Min(image.Height, y + block);
+                    var maxX = Math.Min(image.Width, x + block);
+
+                    for (var yy = y; yy < maxY; yy++)
+                    {
+                        var row = accessor.GetRowSpan(yy);
+                        for (var xx = x; xx < maxX; xx++)
+                            row[xx] = color;
+                    }
+                }
+            }
+        });
+
+        ApplyVhsEffectToImage(image, snapshot);
+    }
+
+    private static (int R, int G, int B) QuantizeSavedPalette(int r, int g, int b, int palette, PaletteMode mode)
+    {
+        if (palette >= 256 && !IsMonoPaletteMode(mode))
+            return (r, g, b);
+
+        if (IsMonoPaletteMode(mode))
+            return ApplyMonoPalette(r, g, b, palette, mode);
+
+        if (mode == PaletteMode.Gray)
+        {
+            var gray = (r * 30 + g * 59 + b * 11) / 100;
+            var levels = palette <= 16 ? Math.Max(2, palette) : 16;
+            var q = QuantizeSavedChannel(gray, levels);
+            return (q, q, q);
+        }
+
+        if (mode == PaletteMode.Balanced)
+        {
+            r = Math.Clamp((int)Math.Round(r * 1.08), 0, 255);
+            g = Math.Clamp((int)Math.Round(g * 0.88), 0, 255);
+            b = Math.Clamp((int)Math.Round(b * 1.08), 0, 255);
+        }
+
+        if (mode == PaletteMode.Warm)
+        {
+            r = Math.Clamp((int)(r * 1.15), 0, 255);
+            b = Math.Clamp((int)(b * 0.82), 0, 255);
+        }
+        else if (mode == PaletteMode.Cold)
+        {
+            r = Math.Clamp((int)(r * 0.82), 0, 255);
+            b = Math.Clamp((int)(b * 1.18), 0, 255);
+        }
+
+        if (mode == PaletteMode.Green565)
+        {
+            if (palette <= 4)
+            {
+                var gray = (r * 30 + g * 59 + b * 11) / 100;
+                var q = QuantizeSavedChannel(gray, palette);
+                return (q, q, q);
+            }
+            if (palette <= 8) return (QuantizeSavedChannel(r, 2), QuantizeSavedChannel(g, 2), QuantizeSavedChannel(b, 2));
+            if (palette <= 16) return (QuantizeSavedChannel(r, 2), QuantizeSavedChannel(g, 4), QuantizeSavedChannel(b, 2));
+            if (palette <= 32) return (QuantizeSavedChannel(r, 4), QuantizeSavedChannel(g, 4), QuantizeSavedChannel(b, 2));
+            if (palette <= 64) return (QuantizeSavedChannel(r, 4), QuantizeSavedChannel(g, 4), QuantizeSavedChannel(b, 4));
+            return (QuantizeSavedChannel(r, 6), QuantizeSavedChannel(g, 7), QuantizeSavedChannel(b, 6));
+        }
+
+        if (palette <= 4)
+        {
+            var gray = (r * 30 + g * 59 + b * 11) / 100;
+            var q = QuantizeSavedChannel(gray, palette);
+            return (q, q, q);
+        }
+        if (palette <= 8) return (QuantizeSavedChannel(r, 2), QuantizeSavedChannel(g, 2), QuantizeSavedChannel(b, 2));
+        if (palette <= 16) return (QuantizeSavedChannel(r, 2), QuantizeSavedChannel(g, 2), QuantizeSavedChannel(b, 4));
+        if (palette <= 32) return (QuantizeSavedChannel(r, 4), QuantizeSavedChannel(g, 2), QuantizeSavedChannel(b, 4));
+        if (palette <= 64) return (QuantizeSavedChannel(r, 4), QuantizeSavedChannel(g, 4), QuantizeSavedChannel(b, 4));
+        return (QuantizeSavedChannel(r, 5), QuantizeSavedChannel(g, 5), QuantizeSavedChannel(b, 5));
+    }
+
     private static bool TrySaveCurrentPreviewFrame(string outputPath, string format)
     {
         byte[]? rgb;

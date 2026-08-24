@@ -592,7 +592,10 @@ public static partial class Program
                         if (fullHq)
                         {
                             preview.Stop();
-                            await Task.Delay(500);
+                            // Stop() waits briefly for rpicam-vid to release the camera.
+                            // A small guard delay is enough; the old 500 ms pause made the
+                            // shutter feel slower than necessary.
+                            await Task.Delay(120);
                         }
 
                         string? lastPath = null;
@@ -620,8 +623,8 @@ public static partial class Program
                         _lastCapturedPath = lastPath;
                         DrawSaved(display, width, height, glitchPhoto
                             ? (glitchCount > 1 ? $"GLITCH x{glitchCount} OK" : "GLITCH OK")
-                            : (fullHq ? "PHOTO HQ OK" : "PHOTO PREVIEW OK"));
-                        await Task.Delay(glitchPhoto && glitchCount > 1 ? 650 : 350);
+                            : (fullHq ? "HQ CAPTURED" : "PHOTO PREVIEW OK"));
+                        await Task.Delay(glitchPhoto && glitchCount > 1 ? 650 : fullHq ? 100 : 350);
                     }
                     catch (Exception ex)
                     {
@@ -645,6 +648,9 @@ public static partial class Program
 
             await Task.Delay(25);
         }
+
+        // Do not lose already captured HQ source files on a normal application exit.
+        await WaitForPendingHqProcessingAsync();
 
         try
         {

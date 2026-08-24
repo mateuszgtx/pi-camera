@@ -61,24 +61,163 @@ public static partial class Program
 
 
 
+    private sealed record HqProcessingSnapshot(
+        int PixelBlockSize,
+        int ColorLevels,
+        int BlackLevel,
+        double DarkLevel,
+        double Saturation,
+        double RedScale,
+        double GreenScale,
+        double BlueScale,
+        PaletteMode PaletteMode,
+        string LookPreset,
+        double LowSaveGamma,
+        int LowGrayYellowFix,
+        int VhsGlitchFrequency,
+        int VhsQuality,
+        int VhsScanlines,
+        int VhsNoise,
+        int VhsWobble,
+        int JpgQuality);
+
+    private static readonly SemaphoreSlim _hqProcessingGate = new(1, 1);
+    private static readonly object _hqProcessingTasksLock = new();
+    private static readonly HashSet<Task> _hqProcessingTasks = new();
+    private static int _hqProcessingPending;
+
+    private static HqProcessingSnapshot CaptureHqProcessingSnapshot()
+    {
+        return new HqProcessingSnapshot(
+            PixelBlockSize: FullHqPixelBlockSize(),
+            ColorLevels: Math.Clamp(_previewSettings.PreviewColorLevels, 2, 256),
+            BlackLevel: Math.Clamp(_previewSettings.BlackLevel, 0, 240),
+            DarkLevel: Math.Clamp(_previewSettings.DarkLevel, 0.25, 2.0),
+            Saturation: _previewSettings.Saturation,
+            RedScale: _redScale,
+            GreenScale: _greenScale,
+            BlueScale: _blueScale,
+            PaletteMode: _paletteMode,
+            LookPreset: _lookPreset,
+            LowSaveGamma: _lowSaveGamma,
+            LowGrayYellowFix: _lowGrayYellowFix,
+            VhsGlitchFrequency: _vhsGlitchFrequency,
+            VhsQuality: _vhsQuality,
+            VhsScanlines: _vhsScanlines,
+            VhsNoise: _vhsNoise,
+            VhsWobble: _vhsWobble,
+            JpgQuality: Math.Clamp(_jpgQuality, 70, 100));
+    }
+
     private static async Task<string> TakeFullHqPhotoAsync(string outputDir, string finalPath)
     {
-        var tempPath = Path.Combine(outputDir, $"TMP_HQ_{DateTime.Now:yyyyMMdd_HHmmssfff}.jpg");
+        // Keep source captures outside the gallery while background processing is running.
+        var processingDir = Path.Combine(outputDir, ".hq-processing");
+        Directory.CreateDirectory(processingDir);
+        var tempPath = Path.Combine(processingDir, $"TMP_HQ_{DateTime.Now:yyyyMMdd_HHmmssfff}_{Guid.NewGuid():N}.jpg");
+        var format = _photoFormat;
+        var snapshot = CaptureHqProcessingSnapshot();
 
-        try
+        var captureTimer = Stopwatch.StartNew();
+        await CaptureStillJpegAsync(tempPath, _photoWidth, _photoHeight);
+        captureTimer.Stop();
+        Console.WriteLine($"[HQ CAPTURE] sensor capture finished in {captureTimer.Elapsed.TotalSeconds:0.00}s: {Path.GetFileName(finalPath)}");
+
+        // A glitch burst changes the look between frames. Keep it synchronous so every
+        // frame is processed with exactly the settings used for that capture. Regular
+        // HQ photos are queued in the background, which lets the preview restart as soon
+        // as rpicam-still has released the camera.
+        if (_captureKind == CaptureKind.GlitchPhoto)
         {
-            await CaptureStillJpegAsync(tempPath, _photoWidth, _photoHeight);
+            try
+            {
+                await ProcessCapturedHqPhotoAsync(tempPath, finalPath, format, snapshot);
+            }
+            finally
+            {
+                TryDelete(tempPath);
+            }
 
-            using var image = await Image.LoadAsync<Rgb24>(tempPath);
-            ApplyFullPhotoLook(image);
-
-            await SaveImageByFormatAsync(image, finalPath, _photoFormat);
             return finalPath;
         }
-        finally
+
+        QueueHqPhotoProcessing(tempPath, finalPath, format, snapshot);
+        return finalPath;
+    }
+
+    private static void QueueHqPhotoProcessing(string tempPath, string finalPath, string format, HqProcessingSnapshot snapshot)
+    {
+        Interlocked.Increment(ref _hqProcessingPending);
+
+        var task = Task.Run(async () =>
         {
-            TryDelete(tempPath);
-        }
+            await _hqProcessingGate.WaitAsync();
+            try
+            {
+                var processTimer = Stopwatch.StartNew();
+                Console.WriteLine($"[HQ PROCESS] start {Path.GetFileName(finalPath)} (pending={Volatile.Read(ref _hqProcessingPending)})");
+                await ProcessCapturedHqPhotoAsync(tempPath, finalPath, format, snapshot);
+                processTimer.Stop();
+                Console.WriteLine($"[HQ PROCESS] done {Path.GetFileName(finalPath)} in {processTimer.Elapsed.TotalSeconds:0.00}s");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[HQ PROCESS] failed {Path.GetFileName(finalPath)}: {ex}");
+
+                try
+                {
+                    TryDelete(finalPath);
+                    var recoveryPath = Path.Combine(
+                        Path.GetDirectoryName(finalPath) ?? ".",
+                        Path.GetFileNameWithoutExtension(finalPath) + "_UNPROCESSED.jpg");
+                    File.Copy(tempPath, recoveryPath, overwrite: true);
+                    Console.WriteLine($"[HQ PROCESS] source preserved as {Path.GetFileName(recoveryPath)}");
+                }
+                catch (Exception recoveryEx)
+                {
+                    Console.WriteLine($"[HQ PROCESS] recovery copy failed: {recoveryEx.Message}");
+                }
+            }
+            finally
+            {
+                TryDelete(tempPath);
+                Interlocked.Decrement(ref _hqProcessingPending);
+                _hqProcessingGate.Release();
+            }
+        });
+
+        lock (_hqProcessingTasksLock)
+            _hqProcessingTasks.Add(task);
+
+        _ = task.ContinueWith(_ =>
+        {
+            lock (_hqProcessingTasksLock)
+                _hqProcessingTasks.Remove(task);
+        }, TaskScheduler.Default);
+    }
+
+    private static async Task ProcessCapturedHqPhotoAsync(
+        string tempPath,
+        string finalPath,
+        string format,
+        HqProcessingSnapshot snapshot)
+    {
+        using var image = await Image.LoadAsync<Rgb24>(tempPath);
+        ApplyFullPhotoLook(image, snapshot);
+        await SaveImageByFormatAsync(image, finalPath, format, snapshot.JpgQuality);
+    }
+
+    private static async Task WaitForPendingHqProcessingAsync()
+    {
+        Task[] tasks;
+        lock (_hqProcessingTasksLock)
+            tasks = _hqProcessingTasks.ToArray();
+
+        if (tasks.Length == 0)
+            return;
+
+        Console.WriteLine($"[HQ PROCESS] waiting for {tasks.Length} pending job(s) before exit");
+        await Task.WhenAll(tasks);
     }
 
     private static async Task CaptureStillJpegAsync(string outputPath, int width, int height)
@@ -270,7 +409,7 @@ public static partial class Program
         }
     }
 
-    private static async Task SaveImageByFormatAsync(Image<Rgb24> image, string path, string format)
+    private static async Task SaveImageByFormatAsync(Image<Rgb24> image, string path, string format, int jpgQuality)
     {
         switch (format.ToLowerInvariant())
         {
@@ -281,7 +420,7 @@ public static partial class Program
                 await image.SaveAsBmpAsync(path);
                 break;
             default:
-                await image.SaveAsJpegAsync(path, new JpegEncoder { Quality = Math.Clamp(_jpgQuality, 70, 100) });
+                await image.SaveAsJpegAsync(path, new JpegEncoder { Quality = Math.Clamp(jpgQuality, 70, 100) });
                 break;
         }
     }
