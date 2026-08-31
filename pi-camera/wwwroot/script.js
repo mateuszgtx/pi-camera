@@ -1,4 +1,5 @@
 let state = {}, options = {}, saveTimer = null, currentMode = 'raw', currentTab = 'basic';
+let fullscreenFallback = false;
 let bluetoothScanActive = false, bluetoothScanTimer = null, bluetoothActionBusy = false, audioAutoRefreshTimer = null;
 let audioListenActive = false;
 let audioListenAbort = null, audioListenContext = null, audioListenProcessor = null;
@@ -214,6 +215,27 @@ function setImg(id, url) {
     img.src = url;
 }
 
+function fullscreenElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function isFullscreenView() {
+    return fullscreenFallback || fullscreenElement() === $('previewWrap');
+}
+
+function openFullscreenPicker() {
+    closeDrawers();
+    $('fullscreenPicker')?.classList.remove('hidden');
+}
+
+function closeFullscreenPicker() {
+    $('fullscreenPicker')?.classList.add('hidden');
+}
+
+function previewStreamUrl(raw, quality, fps) {
+    return `/api/stream.mjpg?raw=${raw ? 'true' : 'false'}&q=${quality}&fps=${fps}&ts=${Date.now()}`;
+}
+
 function previewMode(mode) {
     currentMode = mode;
     const wrap = $('previewWrap');
@@ -229,22 +251,84 @@ function previewMode(mode) {
 
     const w = wrap.clientWidth || innerWidth;
     const h = wrap.clientHeight || innerHeight;
+    const fullscreen = isFullscreenView();
 
     wrap.classList.toggle('dual', mode === 'both');
     wrap.classList.toggle('portrait', mode === 'both' && h >= w);
     wrap.classList.toggle('landscape', mode === 'both' && w > h);
 
     if (mode === 'raw') {
-        setImg('previewRaw', '/api/stream.mjpg?raw=true&q=42&fps=18&ts=' + Date.now());
+        setImg('previewRaw', fullscreen ? previewStreamUrl(true, 95, 30) : previewStreamUrl(true, 42, 18));
         setImg('previewFiltered', '');
     } else if (mode === 'filtered') {
-        setImg('previewFiltered', '/api/stream.mjpg?raw=false&q=45&fps=14&ts=' + Date.now());
+        setImg('previewFiltered', fullscreen ? previewStreamUrl(false, 95, 24) : previewStreamUrl(false, 45, 14));
         setImg('previewRaw', '');
     } else {
-        setImg('previewRaw', '/api/stream.mjpg?raw=true&q=40&fps=10&ts=' + Date.now());
-        setImg('previewFiltered', '/api/stream.mjpg?raw=false&q=40&fps=10&ts=' + Date.now());
+        // Two simultaneous high-quality encodes are CPU-heavy, so keep a little headroom.
+        setImg('previewRaw', fullscreen ? previewStreamUrl(true, 90, 16) : previewStreamUrl(true, 40, 10));
+        setImg('previewFiltered', fullscreen ? previewStreamUrl(false, 90, 16) : previewStreamUrl(false, 40, 10));
     }
 }
+
+async function enterFullscreen(mode) {
+    closeFullscreenPicker();
+    closeDrawers();
+    fullscreenFallback = false;
+    document.body.classList.remove('fullscreen-fallback');
+    previewMode(mode);
+
+    const wrap = $('previewWrap');
+    try {
+        if (wrap.requestFullscreen) {
+            await wrap.requestFullscreen();
+            return;
+        }
+        if (wrap.webkitRequestFullscreen) {
+            wrap.webkitRequestFullscreen();
+            return;
+        }
+    } catch (e) {
+        console.warn('Fullscreen API failed, using layout fallback', e);
+    }
+
+    fullscreenFallback = true;
+    document.body.classList.add('fullscreen-fallback');
+    previewMode(mode);
+}
+
+async function exitFullscreenView() {
+    if (fullscreenFallback) {
+        fullscreenFallback = false;
+        document.body.classList.remove('fullscreen-fallback');
+        previewMode(currentMode);
+        return;
+    }
+
+    try {
+        if (document.fullscreenElement && document.exitFullscreen) {
+            await document.exitFullscreen();
+            return;
+        }
+        if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+        }
+    } catch (e) {
+        console.warn('Exit fullscreen failed', e);
+    }
+}
+
+function onFullscreenChange() {
+    if (fullscreenElement() === $('previewWrap')) {
+        document.body.classList.add('fullscreen-view');
+    } else {
+        document.body.classList.remove('fullscreen-view');
+        if (!fullscreenFallback) document.body.classList.remove('fullscreen-fallback');
+    }
+    previewMode(currentMode);
+}
+
+document.addEventListener('fullscreenchange', onFullscreenChange);
+document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 addEventListener('resize', () => previewMode(currentMode));
 
 async function capture() {
@@ -1102,7 +1186,20 @@ async function resetSettings() {
 }
 
 async function init() {
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeLightbox(); closeDrawers(); } });
+    $('previewWrap')?.addEventListener('click', () => {
+        // The CSS fallback has no visible controls; a tap/click exits it.
+        if (fullscreenFallback) exitFullscreenView();
+    });
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        closeFullscreenPicker();
+        if (fullscreenFallback) {
+            exitFullscreenView();
+            return;
+        }
+        closeLightbox();
+        closeDrawers();
+    });
     wireAudioMonitorEvents();
     const ok = await checkAuth();
     if (ok) {

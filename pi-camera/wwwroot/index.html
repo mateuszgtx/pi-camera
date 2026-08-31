@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <title>Pi Camera</title>
-<link rel="stylesheet" href="style.css?v=20260824-gallery">
+<link rel="stylesheet" href="style.css?v=20260831-fullscreen">
 </head>
 <body>
 <div id="loginOverlay" class="loginOverlay hidden">
@@ -40,11 +40,25 @@
   <div class="bottom">
     <div class="actions">
       <button id="mainAction" class="capture" onclick="mainAction()">Photo</button>
+      <button class="fullscreenBtn" onclick="openFullscreenPicker()">⛶ Fullscreen</button>
       <button onclick="openDrawer('settings')">Settings</button>
       <button onclick="openDrawer('settings');tab('wifi');loadNetwork()">WiFi</button>
       <button onclick="openDrawer('settings');tab('audio');loadAudio()">Audio</button>
       <button class="galleryBtn" onclick="openDrawer('photos');loadPhotos()">Gallery</button>
     </div>
+  </div>
+</div>
+
+<div id="fullscreenPicker" class="fullscreenPicker hidden" role="dialog" aria-modal="true" aria-labelledby="fullscreenTitle" onclick="if(event.target===this)closeFullscreenPicker()">
+  <div class="fullscreenCard">
+    <div id="fullscreenTitle" class="fullscreenTitle">Fullscreen view</div>
+    <div class="mini muted">Choose the camera view. Fullscreen uses a higher JPEG quality and higher preview frame rate.</div>
+    <div class="fullscreenChoices">
+      <button class="primary" onclick="enterFullscreen('raw')">Normal</button>
+      <button class="primary" onclick="enterFullscreen('filtered')">Filter</button>
+      <button class="primary" onclick="enterFullscreen('both')">Both</button>
+    </div>
+    <button class="ghost" onclick="closeFullscreenPicker()">Cancel</button>
   </div>
 </div>
 
@@ -261,6 +275,6 @@
   </div>
 </div>
 
-<script src="script.js?v=20260824-gallery"></script>
+<script src="script.js?v=20260831-fullscreen"></script>
 </body>
 </html>

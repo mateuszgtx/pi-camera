@@ -84,7 +84,7 @@ public static partial class Program
                 context.Response.Headers.Expires = "0";
 
                 var useRaw = raw ?? false;
-                var quality = Math.Clamp(q ?? 50, 35, 80);
+                var quality = Math.Clamp(q ?? 50, 35, 95);
                 var targetFps = Math.Clamp(fps ?? 15, 1, 30);
                 var delayMs = Math.Max(1, 1000 / targetFps);
                 var token = context.RequestAborted;
