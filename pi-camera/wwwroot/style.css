@@ -98,13 +98,19 @@ button.round{width:58px;height:58px;border-radius:50%;padding:0;font-size:22px}
 }
 .actions{
   display:grid;
-  grid-template-columns:1.6fr repeat(5,1fr);
+  grid-template-columns:1.6fr auto repeat(4,1fr);
   gap:7px;
   max-width:720px;
   margin:0 auto;
 }
 .actions button{font-size:13px;min-width:0;padding:10px 8px;border-radius:18px}
 .actions .capture{background:#fff;color:#000;font-size:15px}
+.actions button:disabled{opacity:.4}
+.activityIndicator{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:12px;font-weight:700;color:#aaa;padding:0 3px}
+.activityDot{width:10px;height:10px;border-radius:50%;background:#666;flex:none}
+.activityIndicator.active{color:#fff}
+.activityIndicator.active .activityDot{background:#ff4444;box-shadow:0 0 9px #ff4444;animation:activityPulse 1s infinite alternate}
+@keyframes activityPulse{to{opacity:.4}}
 
 /* fullscreen preview chooser */
 .fullscreenPicker{
@@ -196,12 +202,12 @@ body.fullscreen-fallback .status{display:none!important}
 .tabs{
   position:sticky;top:0;z-index:2;
   display:grid;
-  grid-template-columns:repeat(8,1fr);
+  grid-template-columns:repeat(3,minmax(0,1fr));
   gap:6px;
   background:rgba(10,10,10,.98);
   padding:6px 0 10px;
 }
-.tabs button{min-width:0;min-height:42px;padding:8px 5px;border-radius:14px;font-size:12px;background:#171717;color:#bbb}
+.tabs button{min-width:0;min-height:44px;padding:8px 6px;border-radius:12px;font-size:13px;background:#171717;color:#bbb;overflow-wrap:anywhere}
 .tabs button.on{background:#fff;color:#000}
 .section{display:none}
 .section.on{display:block}
@@ -275,6 +281,7 @@ input[type=range]{
   .handle{display:none}.drawerHead{padding-top:14px}.drawerBody{padding-bottom:18px}
 }
 @media (max-width:899px){
+  .tabs{position:static}
   body.settings-open #app{height:42svh;min-height:260px}
   body.settings-open #settings{max-height:58svh}
   body.settings-open #previewWrap{padding-top:var(--safe-top)}
@@ -283,6 +290,10 @@ input[type=range]{
   body.settings-open .actions button{min-height:40px;padding:8px 6px;font-size:12px;border-radius:14px}
 }
 @media (max-width:760px){
+  .actions{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)}
+  .activityIndicator{justify-content:center;font-size:11px}
+  .actions .fullscreenBtn{grid-column:1}
+  .actions button[onclick="openDrawer('settings')"]{grid-column:2 / 4}
   .galleryBtn{display:none!important}
   #photos{display:none!important}
 }
@@ -297,7 +308,8 @@ input[type=range]{
   .actions button{font-size:12px;padding-left:5px;padding-right:5px}
   .modePills button{padding:7px 10px}
 }
-@media (max-width:520px){.tabs{overflow-x:auto;justify-content:flex-start}.row{padding:12px}.bottom button{font-size:12px;padding:10px 8px}.modePills{bottom:10px}.drawer{max-height:58vh}}
+@media (max-width:520px){.row{padding:12px}.bottom button{font-size:12px;padding:10px 8px}.modePills{bottom:10px}.drawer{max-height:58vh}}
+@media (max-height:500px){.tabs{position:static}}
 
 .bluetoothCard{margin-top:10px}
 .deviceRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #242424}

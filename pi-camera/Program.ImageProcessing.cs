@@ -364,6 +364,7 @@ public static partial class Program
             }
         });
 
+        ApplyPreviewBrightness(image, _previewSettings.Brightness);
         ApplyVhsEffectToImage(image);
 
         if (format == "png")
@@ -624,9 +625,33 @@ public static partial class Program
             FillImageWithCurrentLook(image, rgb, srcW, srcH);
         }
 
+        ApplyPreviewBrightness(image, _webBrightness);
+
         using var ms = new MemoryStream();
         image.SaveAsJpeg(ms, new JpegEncoder { Quality = Math.Clamp(quality, 35, 95) });
         return ms.ToArray();
+    }
+
+    private static void ApplyPreviewBrightness(Image<Rgb24> image, double brightness)
+    {
+        var offset = (int)Math.Round(Math.Clamp(brightness, -1.0, 1.0) * 255);
+        if (offset == 0) return;
+
+        image.ProcessPixelRows(accessor =>
+        {
+            for (var y = 0; y < image.Height; y++)
+            {
+                var row = accessor.GetRowSpan(y);
+                for (var x = 0; x < row.Length; x++)
+                {
+                    var p = row[x];
+                    row[x] = new Rgb24(
+                        (byte)Math.Clamp(p.R + offset, 0, 255),
+                        (byte)Math.Clamp(p.G + offset, 0, 255),
+                        (byte)Math.Clamp(p.B + offset, 0, 255));
+                }
+            }
+        });
     }
 
     private static void FillImageWithCurrentLook(Image<Rgb24> image, byte[] rgb, int srcW, int srcH)

@@ -214,6 +214,8 @@ public static partial class Program
     private static string _hotspotSsid = "PiCamera";
     private static string _hotspotPassword = "picamera123";
     private static string _settingsFilePath = "";
+    private static double _screenBrightness = 0.0;
+    private static double _webBrightness = 0.0;
 
     private static PreviewSettings _previewSettings = new()
     {
@@ -440,6 +442,7 @@ public static partial class Program
                     double redScale;
                     double greenScale;
                     double blueScale;
+                    double screenBrightness;
                     string paletteMode;
                     string lookPreset;
                     int vhsGlitchFrequency;
@@ -457,6 +460,7 @@ public static partial class Program
                         redScale = _redScale;
                         greenScale = _greenScale;
                         blueScale = _blueScale;
+                        screenBrightness = _screenBrightness;
                         paletteMode = PaletteModeArg();
                         lookPreset = _lookPreset;
                         vhsGlitchFrequency = _vhsGlitchFrequency;
@@ -488,7 +492,8 @@ public static partial class Program
                             redScale,
                             greenScale,
                             blueScale,
-                            paletteMode);
+                            paletteMode,
+                            screenBrightness);
 
                         DrawTopBar(display, width);
                         DrawTabs(display, width, height);

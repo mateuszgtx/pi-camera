@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <title>Pi Camera</title>
-<link rel="stylesheet" href="style.css?v=20260831-fullscreen">
+<link rel="stylesheet" href="style.css?v=20260929-mobile-tabs">
 </head>
 <body>
 <div id="loginOverlay" class="loginOverlay hidden">
@@ -40,10 +40,10 @@
   <div class="bottom">
     <div class="actions">
       <button id="mainAction" class="capture" onclick="mainAction()">Photo</button>
+      <span id="activityIndicator" class="activityIndicator" role="status" aria-live="polite"><span class="activityDot"></span><span id="activityText">Ready</span></span>
+      <button id="undoBtn" class="ghost" onclick="undoSettings()" disabled title="Undo last setting (Ctrl+Z)">Undo ↶</button>
       <button class="fullscreenBtn" onclick="openFullscreenPicker()">⛶ Fullscreen</button>
       <button onclick="openDrawer('settings')">Settings</button>
-      <button onclick="openDrawer('settings');tab('wifi');loadNetwork()">WiFi</button>
-      <button onclick="openDrawer('settings');tab('audio');loadAudio()">Audio</button>
       <button class="galleryBtn" onclick="openDrawer('photos');loadPhotos()">Gallery</button>
     </div>
   </div>
@@ -92,10 +92,11 @@
   <div class="drawerBody">
     <div class="tabs">
       <button id="tab-basic" class="on" onclick="tab('basic')">Mode</button>
-      <button id="tab-stream" onclick="tab('stream')">Stream</button>
-      <button id="tab-photo" onclick="tab('photo')">Photo</button>
+      <button id="tab-brightnessTab" onclick="tab('brightnessTab')">Brightness</button>
       <button id="tab-look" onclick="tab('look')">Color</button>
+      <button id="tab-photo" onclick="tab('photo')">Photo</button>
       <button id="tab-advanced" onclick="tab('advanced')">Live</button>
+      <button id="tab-stream" onclick="tab('stream')">Stream</button>
       <button id="tab-security" onclick="tab('security')">Security</button>
       <button id="tab-wifi" onclick="tab('wifi');loadNetwork()">WiFi</button>
       <button id="tab-audio" onclick="tab('audio');loadAudio()">Audio</button>
@@ -138,7 +139,6 @@
         <div class="row"><div class="rowTop"><label>Width</label><span class="val" id="photoWidthV"></span></div><input id="photoWidth" type="range" min="320" max="4056" step="16" oninput="setNum('photoWidth',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Height</label><span class="val" id="photoHeightV"></span></div><input id="photoHeight" type="range" min="240" max="3040" step="16" oninput="setNum('photoHeight',this.value)"></div>
         <div class="row"><div class="rowTop"><label>JPG quality</label><span class="val" id="jpgQualityV"></span></div><input id="jpgQuality" type="range" min="70" max="100" step="1" oninput="setNum('jpgQuality',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Photo EV</label><span class="val" id="photoEvV"></span></div><input id="photoEv" type="range" min="-8" max="8" step="0.1" oninput="setNum('photoEv',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Random min FPS</label><span class="val" id="randomFrameMinFpsV"></span></div><input id="randomFrameMinFps" type="range" min="1" max="30" step="1" oninput="setNum('randomFrameMinFps',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Random max FPS</label><span class="val" id="randomFrameMaxFpsV"></span></div><input id="randomFrameMaxFps" type="range" min="1" max="30" step="1" oninput="setNum('randomFrameMaxFps',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Random segment seconds</label><span class="val" id="randomFrameSecondsV"></span></div><input id="randomFrameSeconds" type="range" min="1" max="15" step="1" oninput="setNum('randomFrameSeconds',this.value)"></div>
@@ -169,19 +169,31 @@
 
     <div id="advanced" class="section">
       <div class="card grid">
-        <div class="row"><div class="rowTop"><label>Preview EV</label><span class="val" id="evV"></span></div><input id="ev" type="range" min="-8" max="8" step="0.1" oninput="setPreviewNum('ev',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Contrast</label><span class="val" id="contrastV"></span></div><input id="contrast" type="range" min="0" max="32" step="0.05" oninput="setPreviewNum('contrast',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Saturation</label><span class="val" id="saturationV"></span></div><input id="saturation" type="range" min="0" max="32" step="0.05" oninput="setPreviewNum('saturation',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Brightness</label><span class="val" id="brightnessV"></span></div><input id="brightness" type="range" min="-1" max="1" step="0.01" oninput="setPreviewNum('brightness',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Sharpness</label><span class="val" id="sharpnessV"></span></div><input id="sharpness" type="range" min="0" max="16" step="0.05" oninput="setPreviewNum('sharpness',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Black level</label><span class="val" id="blackLevelV"></span></div><input id="blackLevel" type="range" min="0" max="240" step="1" oninput="setPreviewNum('blackLevel',this.value)"></div>
-        <div class="row"><div class="rowTop"><label>Dark level</label><span class="val" id="darkLevelV"></span></div><input id="darkLevel" type="range" min="0.25" max="2" step="0.01" oninput="setPreviewNum('darkLevel',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Pixel / quality</label><span class="val" id="previewPixelSizeV"></span></div><input id="previewPixelSize" type="range" min="1" max="2048" step="1" oninput="setPreviewNum('previewPixelSize',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Preview colors</label><span class="val" id="previewColorLevelsV"></span></div><input id="previewColorLevels" type="range" min="2" max="256" step="1" oninput="setPreviewNum('previewColorLevels',this.value)"></div>
         <div class="row"><div class="rowTop"><label>Denoise</label></div><select id="denoise" onchange="setPreview('denoise',this.value)"></select></div>
       </div>
     </div>
 
+
+    <div id="brightnessTab" class="section">
+      <div class="card grid">
+        <div class="row"><strong>Camera screen (TFT)</strong><div class="mini muted">Changes only the image on the camera display.</div></div>
+        <div class="row"><div class="rowTop"><label>Screen brightness</label><span class="val" id="screenBrightnessV"></span></div><input id="screenBrightness" type="range" min="-1" max="1" step="0.01" oninput="setNum('screenBrightness',this.value)"></div>
+        <div class="row"><strong>Web page</strong><div class="mini muted">Changes Normal and Filter live previews in the browser.</div></div>
+        <div class="row"><div class="rowTop"><label>Web brightness</label><span class="val" id="webBrightnessV"></span></div><input id="webBrightness" type="range" min="-1" max="1" step="0.01" oninput="setNum('webBrightness',this.value)"></div>
+        <div class="row"><strong>Saved photos</strong><div class="mini muted">Changes saved photos, including photos taken from Preview.</div></div>
+        <div class="row"><div class="rowTop"><label>Photo brightness</label><span class="val" id="brightnessV"></span></div><input id="brightness" type="range" min="-1" max="1" step="0.01" oninput="setPreviewNum('brightness',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Photo EV (Full HQ)</label><span class="val" id="photoEvV"></span></div><input id="photoEv" type="range" min="-8" max="8" step="0.1" oninput="setNum('photoEv',this.value)"></div>
+        <div class="row"><strong>Shared image controls</strong><div class="mini muted">Black and dark levels affect the camera screen, the filtered web view and processed photos. Preview EV controls camera exposure and takes effect when the camera preview restarts.</div></div>
+        <div class="row"><div class="rowTop"><label>Preview EV</label><span class="val" id="evV"></span></div><input id="ev" type="range" min="-8" max="8" step="0.1" oninput="setPreviewNum('ev',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Black level</label><span class="val" id="blackLevelV"></span></div><input id="blackLevel" type="range" min="0" max="240" step="1" oninput="setPreviewNum('blackLevel',this.value)"></div>
+        <div class="row"><div class="rowTop"><label>Dark level</label><span class="val" id="darkLevelV"></span></div><input id="darkLevel" type="range" min="0.25" max="2" step="0.01" oninput="setPreviewNum('darkLevel',this.value)"></div>
+      </div>
+    </div>
 
     <div id="security" class="section">
       <div class="card grid">
@@ -275,6 +287,6 @@
   </div>
 </div>
 
-<script src="script.js?v=20260831-fullscreen"></script>
+<script src="script.js?v=20260929-brightness-tab"></script>
 </body>
 </html>

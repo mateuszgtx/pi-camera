@@ -47,7 +47,8 @@ public sealed class CameraPreviewService : IDisposable
             $"--sharpness {_settings.Sharpness.ToString(System.Globalization.CultureInfo.InvariantCulture)} " +
             $"--contrast {_settings.Contrast.ToString(System.Globalization.CultureInfo.InvariantCulture)} " +
             $"--saturation {_settings.Saturation.ToString(System.Globalization.CultureInfo.InvariantCulture)} " +
-            $"--brightness {_settings.Brightness.ToString(System.Globalization.CultureInfo.InvariantCulture)} " +
+            // Screen, web and photo brightness are applied separately downstream.
+            $"--brightness 0 " +
             $"--denoise {_settings.Denoise} " +
             $"-o -";
 

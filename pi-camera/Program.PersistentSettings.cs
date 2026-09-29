@@ -74,6 +74,8 @@ public static partial class Program
                 photoHeight = _photoHeight,
                 jpgQuality = _jpgQuality,
                 photoEv = _photoEv,
+                screenBrightness = _screenBrightness,
+                webBrightness = _webBrightness,
                 videoFormat = _videoFormat,
                 videoSeconds = _videoSeconds,
                 streamUrl = _streamUrl,
@@ -141,6 +143,8 @@ public static partial class Program
             _photoHeight = 3040;
             _jpgQuality = 95;
             _photoEv = -1.0;
+            _screenBrightness = 0.0;
+            _webBrightness = 0.0;
             _videoFormat = "mjpeg";
             _videoSeconds = 0;
             _streamUrl = "";

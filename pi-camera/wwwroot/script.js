@@ -1,4 +1,27 @@
 let state = {}, options = {}, saveTimer = null, currentMode = 'raw', currentTab = 'basic';
+const undoHistory = [];
+let sliderGesture = null, settingsRevision = 0, saveQueue = Promise.resolve();
+
+function rememberSetting() {
+    if (sliderGesture) {
+        if (sliderGesture.recorded) return;
+        sliderGesture.recorded = true;
+    }
+    undoHistory.push(structuredClone(state));
+    if (undoHistory.length > 100) undoHistory.shift();
+    const button = $('undoBtn');
+    if (button) button.disabled = false;
+}
+
+function undoSettings() {
+    if (!undoHistory.length) return;
+    sliderGesture = null;
+    state = undoHistory.pop();
+    $('undoBtn').disabled = undoHistory.length === 0;
+    sync();
+    scheduleSave();
+    toast('Setting restored');
+}
 let fullscreenFallback = false;
 let bluetoothScanActive = false, bluetoothScanTimer = null, bluetoothActionBusy = false, audioAutoRefreshTimer = null;
 let audioListenActive = false;
@@ -191,7 +214,7 @@ function closeLightbox() {
 
 function tab(id) {
     currentTab = id;
-    for (const x of ['basic', 'stream', 'photo', 'look', 'advanced', 'security', 'wifi', 'audio']) {
+    for (const x of ['basic', 'stream', 'photo', 'look', 'advanced', 'brightnessTab', 'security', 'wifi', 'audio']) {
         $(x).classList.toggle('on', x === id);
         $('tab-' + x).classList.toggle('on', x === id);
     }
@@ -382,6 +405,24 @@ function actionLabel() {
 function updateMainAction() {
     const btn = $('mainAction');
     if (btn) btn.textContent = actionLabel();
+    const active = !!(state.recording || state.glitchVideoRecording || state.streaming || state.busy);
+    const indicator = $('activityIndicator');
+    if (indicator) indicator.classList.toggle('active', active);
+    const label = $('activityText');
+    if (label) label.textContent = state.busy ? 'Working' : state.recording || state.glitchVideoRecording ? 'Recording' : state.streaming ? 'Streaming' : 'Ready';
+}
+
+async function refreshActivity() {
+    try {
+        const r = await fetch('/api/status', { cache: 'no-store' });
+        if (!r.ok) return;
+        const data = await r.json();
+        for (const key of ['busy', 'recording', 'randomRecording', 'streaming']) {
+            if (typeof data[key] === 'boolean') state[key] = data[key];
+        }
+        state.glitchVideoRecording = !!(state.recording && state.captureKind === 'GlitchVideo');
+        updateMainAction();
+    } catch { }
 }
 
 async function mainAction() {
@@ -1065,6 +1106,8 @@ function fillSelect(id, arr) {
 async function loadSettings() {
     options = await (await fetch('/api/settings/options')).json();
     state = await (await fetch('/api/settings')).json();
+    undoHistory.length = 0;
+    if ($('undoBtn')) $('undoBtn').disabled = true;
 
     fillSelect('captureKind', options.captureKinds);
     fillSelect('lookPreset', options.lookPresets || ['NORMAL', 'LOW32', 'LOW16', 'RETRO8', 'VHS', 'MONO4']);
@@ -1106,7 +1149,7 @@ function put(id, value) {
 }
 
 function sync() {
-    for (const k of ['captureKind', 'lookPreset', 'photoSource', 'photoFormat', 'videoFormat', 'streamUrl', 'streamOutputFormat', 'streamFps', 'streamBitrateKbps', 'streamJpegQuality', 'streamUseRaw', 'audioEnabled', 'audioInputMode', 'audioInputFormat', 'audioDevice', 'audioSampleRate', 'audioBitrateKbps', 'sensorMode', 'paletteMode', 'photoWidth', 'photoHeight', 'jpgQuality', 'photoEv', 'videoSeconds', 'previewFps', 'randomFrameMinFps', 'randomFrameMaxFps', 'randomFrameSeconds', 'glitchStrength', 'glitchChangeMs', 'glitchPhotoCount', 'vhsGlitchFrequency', 'vhsQuality', 'vhsScanlines', 'vhsNoise', 'vhsWobble', 'selectedColorAmount', 'redScale', 'greenScale', 'blueScale', 'lowSaveGamma', 'lowGrayYellowFix']) put(k, state[k]);
+    for (const k of ['captureKind', 'lookPreset', 'photoSource', 'photoFormat', 'videoFormat', 'streamUrl', 'streamOutputFormat', 'streamFps', 'streamBitrateKbps', 'streamJpegQuality', 'streamUseRaw', 'audioEnabled', 'audioInputMode', 'audioInputFormat', 'audioDevice', 'audioSampleRate', 'audioBitrateKbps', 'sensorMode', 'paletteMode', 'photoWidth', 'photoHeight', 'jpgQuality', 'photoEv', 'screenBrightness', 'webBrightness', 'videoSeconds', 'previewFps', 'randomFrameMinFps', 'randomFrameMaxFps', 'randomFrameSeconds', 'glitchStrength', 'glitchChangeMs', 'glitchPhotoCount', 'vhsGlitchFrequency', 'vhsQuality', 'vhsScanlines', 'vhsNoise', 'vhsWobble', 'selectedColorAmount', 'redScale', 'greenScale', 'blueScale', 'lowSaveGamma', 'lowGrayYellowFix']) put(k, state[k]);
     const st = $('streamTargetV'); if (st) st.textContent = state.streaming ? 'STREAM ON' : (state.streamTarget || '');
     renderSecurityStatus();
     updateMainAction();
@@ -1114,21 +1157,33 @@ function sync() {
     for (const k of ['ev', 'sharpness', 'contrast', 'saturation', 'brightness', 'blackLevel', 'darkLevel', 'previewPixelSize', 'previewColorLevels', 'denoise']) put(k, p[k]);
 }
 
-async function save() {
-    try {
-        const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state) });
-        state = await r.json();
-        sync();
-        toast('Saved');
-    } catch (e) { toast('Save error') }
+function save() {
+    const revision = settingsRevision;
+    const body = JSON.stringify(state);
+    saveQueue = saveQueue.catch(() => {}).then(async () => {
+        // A newer edit supersedes a request that has not started yet.
+        if (revision !== settingsRevision) return;
+        const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+        if (!r.ok) throw new Error('Save failed');
+        const saved = await r.json();
+        if (revision === settingsRevision) {
+            state = saved;
+            sync();
+            toast('Saved');
+        }
+    }).catch(() => toast('Save error'));
+    return saveQueue;
 }
 
 function scheduleSave() {
+    settingsRevision++;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(save, 180);
 }
 
 function set(k, val) {
+    if (state[k] === val) return;
+    rememberSetting();
     if (audioListenActive && ['audioInputMode', 'audioInputFormat', 'audioDevice'].includes(k)) stopAudioListen(true);
     state[k] = val;
     if (k === 'captureKind') updateMainAction();
@@ -1140,6 +1195,8 @@ function set(k, val) {
 }
 
 function setBool(k, val) {
+    if (state[k] === (String(val) === 'true')) return;
+    rememberSetting();
     if (audioListenActive && k === 'audioEnabled') stopAudioListen(true);
     state[k] = String(val) === 'true';
     put(k, state[k]);
@@ -1147,6 +1204,8 @@ function setBool(k, val) {
 }
 
 function setNum(k, val) {
+    if (state[k] === Number(val)) return;
+    rememberSetting();
     state[k] = Number(val);
     if (k === 'selectedColorAmount') {
         state.preview = state.preview || {};
@@ -1159,6 +1218,8 @@ function setNum(k, val) {
 
 function setPreview(k, val) {
     state.preview = state.preview || {};
+    if (state.preview[k] === val) return;
+    rememberSetting();
     state.preview[k] = val;
     scheduleSave();
 }
@@ -1166,6 +1227,8 @@ function setPreview(k, val) {
 function setPreviewNum(k, val) {
     state.preview = state.preview || {};
     if (k === 'previewPixelSize' && state.photoSource === 'Preview') val = Math.min(Number(val), 256);
+    if (state.preview[k] === Number(val)) return;
+    rememberSetting();
     state.preview[k] = Number(val);
     if (k === 'previewColorLevels') {
         state.selectedColorAmount = state.preview[k];
@@ -1178,7 +1241,12 @@ function setPreviewNum(k, val) {
 async function resetSettings() {
     if (!confirm('Reset settings to defaults?')) return;
     try {
+        clearTimeout(saveTimer);
+        settingsRevision++;
+        await saveQueue;
         const r = await fetch('/api/settings/reset', { method: 'POST' });
+        if (!r.ok) throw new Error('Reset failed');
+        rememberSetting();
         state = await r.json();
         sync();
         toast(r.ok ? 'Defaults restored' : 'Reset error');
@@ -1186,11 +1254,23 @@ async function resetSettings() {
 }
 
 async function init() {
+    document.addEventListener('pointerdown', e => {
+        if (e.target.matches('input[type="range"]')) sliderGesture = { element: e.target, recorded: false };
+    });
+    const endGesture = () => { sliderGesture = null; };
+    document.addEventListener('pointerup', endGesture);
+    document.addEventListener('pointercancel', endGesture);
     $('previewWrap')?.addEventListener('click', () => {
         // The CSS fallback has no visible controls; a tap/click exits it.
         if (fullscreenFallback) exitFullscreenView();
     });
     document.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+            if (e.target.matches('input[type="text"], input[type="password"], textarea, [contenteditable="true"]')) return;
+            e.preventDefault();
+            undoSettings();
+            return;
+        }
         if (e.key !== 'Escape') return;
         closeFullscreenPicker();
         if (fullscreenFallback) {
@@ -1205,6 +1285,8 @@ async function init() {
     if (ok) {
         previewMode('raw');
         await loadSettings();
+        refreshActivity();
+        setInterval(refreshActivity, 1000);
     }
 }
 

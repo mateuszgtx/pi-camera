@@ -670,6 +670,8 @@ public static partial class Program
                 photoHeight = _photoHeight,
                 jpgQuality = _jpgQuality,
                 photoEv = _photoEv,
+                screenBrightness = _screenBrightness,
+                webBrightness = _webBrightness,
                 videoFormat = _videoFormat,
                 videoSeconds = _videoSeconds,
                 recording = _previewRecording,
@@ -767,6 +769,10 @@ public static partial class Program
 
             if (TryGetDouble(json, "photoEv", out var photoEv))
                 _photoEv = Math.Clamp(photoEv, -8.0, 8.0);
+            if (TryGetDouble(json, "screenBrightness", out var screenBrightness))
+                _screenBrightness = Math.Clamp(screenBrightness, -1.0, 1.0);
+            if (TryGetDouble(json, "webBrightness", out var webBrightness))
+                _webBrightness = Math.Clamp(webBrightness, -1.0, 1.0);
 
             if (TryGetString(json, "videoFormat", out var videoFormat))
                 _videoFormat = NormalizeVideoFormat(videoFormat);

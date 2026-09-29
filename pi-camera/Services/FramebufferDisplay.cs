@@ -56,7 +56,7 @@ public sealed class FramebufferDisplay : IDisposable
     }
 
 
-    public void DrawRgbFrameAdjusted(byte[] rgb, int srcW, int srcH, int dstX, int dstY, int blackLevel, double darkLevel, int pixelSize, int colorLevels, double redScale = 1.0, double greenScale = 1.0, double blueScale = 1.0, string paletteMode = "green565")
+    public void DrawRgbFrameAdjusted(byte[] rgb, int srcW, int srcH, int dstX, int dstY, int blackLevel, double darkLevel, int pixelSize, int colorLevels, double redScale = 1.0, double greenScale = 1.0, double blueScale = 1.0, string paletteMode = "green565", double brightness = 0.0)
     {
         if (srcW <= 0 || srcH <= 0 || rgb.Length < srcW * srcH * 3)
             return;
@@ -70,6 +70,7 @@ public sealed class FramebufferDisplay : IDisposable
             return;
 
         var denom = Math.Max(1, 255 - blackLevel);
+        var brightnessOffset = (int)Math.Round(Math.Clamp(brightness, -1.0, 1.0) * 255);
 
         for (var y = 0; y < drawH; y += pixelSize)
         {
@@ -85,6 +86,10 @@ public sealed class FramebufferDisplay : IDisposable
 
                 (r0, g0, b0) = ApplyColorScaleDisplay(r0, g0, b0, redScale, greenScale, blueScale);
                 (r0, g0, b0) = DisplayToneMap(r0, g0, b0);
+
+                r0 = Math.Clamp(r0 + brightnessOffset, 0, 255);
+                g0 = Math.Clamp(g0 + brightnessOffset, 0, 255);
+                b0 = Math.Clamp(b0 + brightnessOffset, 0, 255);
 
                 var (r, g, b) = QuantizePalette(r0, g0, b0, colorLevels, paletteMode);
 
